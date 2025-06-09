@@ -16,7 +16,7 @@ const config = {
 }
 
 const client = new line.Client(config)
-// ⬇️ 多管理員支援：以 , 分割，組成陣列
+// ⬇️ 多管理員支援：以 , 分割
 const ADMIN_USER_IDS = (process.env.ADMIN_USER_ID || '').split(',').map(x => x.trim()).filter(Boolean)
 
 app.use('/webhook', line.middleware(config), async (req, res) => {
@@ -32,7 +32,25 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
 
     const session = sessionStore.get(userId)
 
-    // ⬇️ 儲存圖片
+    // ===== 📋 查詢所有排程 =====
+    if (event.message.type === 'text' && event.message.text.trim() === '查詢推播') {
+      const list = scheduleManager.listTasks()
+      if (!list.length) {
+        return client.replyMessage(replyToken, { type: 'text', text: '目前沒有任何推播排程。' })
+      }
+      // 單筆訊息過長時分批回傳
+      const chunk = (arr, size) => arr.length ? [arr.slice(0, size), ...chunk(arr.slice(size), size)] : []
+      const msgLines = list.map((task, i) =>
+        `#${i+1}\n群組：${task.groupName}（${task.groupId}）\n時間：${task.date} ${task.time}\n內容：「${task.text}」\n代碼：${task.code}`
+      )
+      const msgChunks = chunk(msgLines, 4)
+      for (const msgs of msgChunks) {
+        await client.replyMessage(replyToken, { type: 'text', text: msgs.join('\n\n') })
+      }
+      return
+    }
+
+    // ===== 儲存圖片 =====
     if (session.step === 'image' && event.message.type === 'image') {
       const messageId = event.message.id
       const buffer = await client.getMessageContent(messageId)
@@ -47,10 +65,10 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
     if (event.message.type !== 'text') return
     const userMessage = event.message.text.trim()
 
-    // ⬇️ 僅接受「排程推播」「刪除推播」開頭指令
+    // ===== 僅接受「排程推播」「刪除推播」開頭指令 =====
     if (!session.step && !userMessage.startsWith('排程推播') && !userMessage.startsWith('刪除推播')) return
 
-    // ⬇️ 刪除推播
+    // ===== 刪除推播 =====
     if (userMessage.startsWith('刪除推播')) {
       const code = userMessage.split(' ')[1]
       const success = scheduleManager.deleteTask(code)
@@ -58,7 +76,7 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
       return client.replyMessage(replyToken, { type: 'text', text: msg })
     }
 
-    // ⬇️ 新增：多一步「輸入群組名稱」
+    // ===== 新增：多一步「輸入群組名稱」=====
     if (userMessage === '排程推播' && !session.step) {
       session.step = 'group'
       sessionStore.set(userId, session)
