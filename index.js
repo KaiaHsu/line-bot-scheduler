@@ -33,7 +33,7 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
     const session = sessionStore.get(userId)
 
     if (userMessage.toLowerCase().startsWith('刪除')) {
-      const code = userMessage.yjsplit(' ')[1]
+      const code = userMessage.split(' ')[1]
       const success = scheduleManager.deleteTask(code)
       const msg = success ? `✅ 已刪除排程 ${code}` : `⚠️ 找不到代碼 ${code}`
       return client.replyMessage(replyToken, { type: 'text', text: msg })
