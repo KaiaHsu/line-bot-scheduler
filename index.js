@@ -22,7 +22,10 @@ const ADMIN_USER_ID = process.env.ADMIN_USER_ID
 app.use('/webhook', line.middleware(config), async (req, res) => {
   const events = req.body.events
   await Promise.all(events.map(async (event) => {
-    
+
+    // 確認 ID
+    console.log('📨 收到事件：', event)
+
     if (event.type === 'message') {
       const userId = event.source.userId
       const replyToken = event.replyToken
@@ -51,7 +54,7 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
 
       // 🔑 僅接受『排程推播』和『刪除推播』開頭的指令
       if (!session.step && !userMessage.startsWith('排程推播') && !userMessage.startsWith('刪除推播')) {
-        
+
         // ❌ 不提示任何訊息
         return
       }
@@ -104,9 +107,7 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
           session.step = 'text'
           sessionStore.set(userId, session)
           return client.replyMessage(replyToken, { type: 'text', text: '💬 請輸入文字內容' })
-        } else {
-          return client.replyMessage(replyToken, { type: 'text', text: '⚠️ 請直接上傳圖片檔案，或輸入「無」' })
-        }
+        } 
       }
 
       if (session.step === 'text') {
