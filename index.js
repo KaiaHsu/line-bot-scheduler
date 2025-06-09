@@ -22,6 +22,8 @@ const ADMIN_USER_ID = process.env.ADMIN_USER_ID
 app.use('/webhook', line.middleware(config), async (req, res) => {
   const events = req.body.events
   await Promise.all(events.map(async (event) => {
+    console.log('📨 收到事件：', event)
+    
     // 只回應文字訊息
     if (event.type !== 'message' || event.message.type !== 'text') return
 
