@@ -22,9 +22,6 @@ const ADMIN_USER_ID = process.env.ADMIN_USER_ID
 app.use('/webhook', line.middleware(config), async (req, res) => {
   const events = req.body.events
   await Promise.all(events.map(async (event) => {
-
-    // 確認 ID
-    console.log('📨 收到事件：', event)
     
     if (event.type === 'message') {
       const userId = event.source.userId
