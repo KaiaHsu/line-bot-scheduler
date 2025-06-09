@@ -4,7 +4,7 @@ const line = require('@line/bot-sdk')
 const dotenv = require('dotenv')
 const scheduleManager = require('./scheduleManager')
 const sessionStore = require('./sessionStore')
-const uploadImageBuffer = require('./cloudinaryUploader')
+const uploadMediaBuffer = require('./cloudinaryUploader') // ⬅️ 支援圖片/影片
 dotenv.config()
 
 const app = express()
@@ -16,9 +16,7 @@ const config = {
 }
 
 const client = new line.Client(config)
-// ⬇️ 多管理員支援：以 , 分割
 const ADMIN_USER_IDS = (process.env.ADMIN_USER_ID || '').split(',').map(x => x.trim()).filter(Boolean)
-
 const SESSION_TIMEOUT = 30 * 60 * 1000 // 30分鐘
 
 // ⬇️ session 取值&過期自動清空
@@ -40,20 +38,18 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
 
     const userId = event.source.userId
     const replyToken = event.replyToken
-
-    // ⬇️ 僅限管理員可操作
     if (!ADMIN_USER_IDS.includes(userId)) return
 
-    // 使用 safeGetSession
+    // session 儲存流程
     const session = safeGetSession(userId)
 
     // ===== 📋 查詢所有排程 =====
     if (event.message.type === 'text' && event.message.text.trim() === '查詢推播') {
-      const list = scheduleManager.listTasks()
+      const list = scheduleManager.listTasks?.() || []
       if (!list.length) {
         return client.replyMessage(replyToken, { type: 'text', text: '目前沒有任何推播排程。' })
       }
-      // 單筆訊息過長時分批回傳
+      // 分批回傳
       const chunk = (arr, size) => arr.length ? [arr.slice(0, size), ...chunk(arr.slice(size), size)] : []
       const msgLines = list.map((task, i) =>
         `#${i+1}\n群組：${task.groupName}（${task.groupId}）\n時間：${task.date} ${task.time}\n內容：「${task.text}」\n代碼：${task.code}`
@@ -65,28 +61,32 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
       return
     }
 
-    // ===== ⏹️ 任何步驟都可中止 =====
+    // ===== ⏹️ 任何步驟可取消 =====
     if (event.message.type === 'text' && event.message.text.trim() === '取消') {
       sessionStore.clear(userId)
       return client.replyMessage(replyToken, { type: 'text', text: '流程已取消，歡迎隨時重新開始。' })
     }
 
-    // ===== 儲存圖片 =====
-    if (session.step === 'image' && event.message.type === 'image') {
+    // ===== 儲存圖片／影片訊息 =====
+    if (
+      session.step === 'image' &&
+      (event.message.type === 'image' || event.message.type === 'video')
+    ) {
       const messageId = event.message.id
       const buffer = await client.getMessageContent(messageId)
       const chunks = []
       for await (let chunk of buffer) { chunks.push(chunk) }
-      session.imageBuffer = Buffer.concat(chunks)
+      session.mediaBuffer = Buffer.concat(chunks)
+      session.mediaType = event.message.type // 'image' 或 'video'
       session.step = 'text'
       sessionStore.set(userId, session)
-      return client.replyMessage(replyToken, { type: 'text', text: '💬 請輸入文字內容' })
+      return client.replyMessage(replyToken, { type: 'text', text: `✅ ${session.mediaType === 'image' ? '圖片' : '影片'}已上傳，請輸入文字內容` })
     }
 
     if (event.message.type !== 'text') return
     const userMessage = event.message.text.trim()
 
-    // ===== 僅接受「排程推播」「刪除推播」開頭指令 =====
+    // ===== 只接受「排程推播」「刪除推播」 =====
     if (!session.step && !userMessage.startsWith('排程推播') && !userMessage.startsWith('刪除推播')) return
 
     // ===== 刪除推播 =====
@@ -97,7 +97,7 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
       return client.replyMessage(replyToken, { type: 'text', text: msg })
     }
 
-    // ===== 新增：多一步「輸入群組名稱」=====
+    // ===== 排程推播流程 =====
     if (userMessage === '排程推播' && !session.step) {
       session.step = 'group'
       sessionStore.set(userId, session)
@@ -131,25 +131,26 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
       session.time = userMessage
       session.step = 'image'
       sessionStore.set(userId, session)
-      return client.replyMessage(replyToken, { type: 'text', text: '🖼️ 請直接上傳一張圖片（或輸入「無」）' })
+      return client.replyMessage(replyToken, { type: 'text', text: '🖼️ 請直接上傳一張圖片、或一段影片（或輸入「無」）' })
     }
     if (session.step === 'image') {
       if (userMessage === '無') {
-        session.imageBuffer = null
+        session.mediaBuffer = null
+        session.mediaType = null
         session.step = 'text'
         sessionStore.set(userId, session)
         return client.replyMessage(replyToken, { type: 'text', text: '💬 請輸入文字內容' })
       }
-      return client.replyMessage(replyToken, { type: 'text', text: '⚠️ 請直接上傳圖片檔案，或輸入「無」' })
+      return client.replyMessage(replyToken, { type: 'text', text: '⚠️ 請直接上傳圖片或影片檔案，或輸入「無」' })
     }
     if (session.step === 'text') {
       session.text = userMessage
-      let imageUrl = null
-      if (session.imageBuffer) {
+      let mediaUrl = null, mediaType = session.mediaType
+      if (session.mediaBuffer) {
         try {
-          imageUrl = await uploadImageBuffer(session.imageBuffer)
+          mediaUrl = await uploadMediaBuffer(session.mediaBuffer)
         } catch (err) {
-          return client.replyMessage(replyToken, { type: 'text', text: '❌ 圖片上傳失敗，請重新嘗試，或輸入「無」略過' })
+          return client.replyMessage(replyToken, { type: 'text', text: '❌ 檔案上傳失敗，請重新嘗試，或輸入「無」略過' })
         }
       }
       const taskCode = scheduleManager.addTask({
@@ -157,7 +158,8 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
         groupName: session.groupName,
         date: session.date,
         time: session.time,
-        imageUrl,
+        mediaUrl,
+        mediaType,
         text: session.text,
         client,
         adminUserIds: ADMIN_USER_IDS
