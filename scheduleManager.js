@@ -5,19 +5,26 @@ const tasks = {}
 
 /**
  * 新增推播排程
+ * @param {Object} param0 - 推播參數
+ * @param {string} param0.mediaUrl - 圖片或影片網址
+ * @param {string} param0.mediaType - 'image' | 'video' | undefined
  */
-function addTask({ groupId, groupName, date, time, imageUrl, text, client, adminUserIds = [] }) {
+function addTask({ groupId, groupName, date, time, mediaUrl, mediaType, text, client, adminUserIds = [] }) {
   const code = `${groupId}_${date}_${time}_${Date.now()}`
   const [hour, minute] = time.split(':')
   const [year, month, day] = date.split('-')
   const jobDate = new Date(year, month - 1, day, hour, minute)
 
   // 保存 meta 資訊供查詢
-  const meta = { groupId, groupName, date, time, imageUrl, text }
+  const meta = { groupId, groupName, date, time, mediaUrl, mediaType, text }
 
   const job = nodeSchedule.scheduleJob(jobDate, async function () {
     const messages = []
-    if (imageUrl) messages.push({ type: 'image', originalContentUrl: imageUrl, previewImageUrl: imageUrl })
+    if (mediaUrl && mediaType === 'image') {
+      messages.push({ type: 'image', originalContentUrl: mediaUrl, previewImageUrl: mediaUrl })
+    } else if (mediaUrl && mediaType === 'video') {
+      messages.push({ type: 'video', originalContentUrl: mediaUrl, previewImageUrl: mediaUrl })
+    }
     if (text) messages.push({ type: 'text', text })
     try {
       if (messages.length) await client.pushMessage(groupId, messages)
@@ -58,7 +65,7 @@ function deleteTask(code) {
 
 /**
  * 查詢所有尚未執行的推播任務
- * 回傳 [{ code, groupName, groupId, date, time, text }]
+ * 回傳 [{ code, groupName, groupId, date, time, text, mediaType }]
  */
 function listTasks() {
   return Object.entries(tasks).map(([code, job]) => {
@@ -69,7 +76,9 @@ function listTasks() {
       groupId: meta.groupId,
       date: meta.date,
       time: meta.time,
-      text: meta.text
+      text: meta.text,
+      mediaType: meta.mediaType,
+      mediaUrl: meta.mediaUrl
     }
   })
 }
