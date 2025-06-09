@@ -4,7 +4,7 @@ const line = require('@line/bot-sdk')
 const dotenv = require('dotenv')
 const scheduleManager = require('./scheduleManager')
 const sessionStore = require('./sessionStore')
-const uploadMediaBuffer = require('./cloudinaryUploader') // ⬅️ 支援圖片/影片
+const uploadMediaBuffer = require('./cloudinaryUploader')
 dotenv.config()
 
 const app = express()
@@ -14,12 +14,12 @@ const config = {
   channelAccessToken: process.env.CHANNEL_ACCESS_TOKEN,
   channelSecret: process.env.CHANNEL_SECRET
 }
-
 const client = new line.Client(config)
+// 多管理員支援
 const ADMIN_USER_IDS = (process.env.ADMIN_USER_ID || '').split(',').map(x => x.trim()).filter(Boolean)
-const SESSION_TIMEOUT = 30 * 60 * 1000 // 30分鐘
+const SESSION_TIMEOUT = 30 * 60 * 1000
 
-// ⬇️ session 取值&過期自動清空
+// session 取值&過期自動清空
 function safeGetSession(userId) {
   const session = sessionStore.get(userId)
   if (session.lastActive && Date.now() - session.lastActive > SESSION_TIMEOUT) {
@@ -38,18 +38,20 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
 
     const userId = event.source.userId
     const replyToken = event.replyToken
+
+    // 僅限管理員可操作
     if (!ADMIN_USER_IDS.includes(userId)) return
 
-    // session 儲存流程
+    // session with timeout
     const session = safeGetSession(userId)
 
     // ===== 📋 查詢所有排程 =====
     if (event.message.type === 'text' && event.message.text.trim() === '查詢推播') {
-      const list = scheduleManager.listTasks?.() || []
+      const list = scheduleManager.listTasks()
       if (!list.length) {
         return client.replyMessage(replyToken, { type: 'text', text: '目前沒有任何推播排程。' })
       }
-      // 分批回傳
+      // 單筆訊息過長時分批回傳
       const chunk = (arr, size) => arr.length ? [arr.slice(0, size), ...chunk(arr.slice(size), size)] : []
       const msgLines = list.map((task, i) =>
         `#${i+1}\n群組：${task.groupName}（${task.groupId}）\n時間：${task.date} ${task.time}\n內容：「${task.text}」\n代碼：${task.code}`
@@ -61,35 +63,38 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
       return
     }
 
-    // ===== ⏹️ 任何步驟可取消 =====
+    // 任何步驟都可中止
     if (event.message.type === 'text' && event.message.text.trim() === '取消') {
       sessionStore.clear(userId)
       return client.replyMessage(replyToken, { type: 'text', text: '流程已取消，歡迎隨時重新開始。' })
     }
 
-    // ===== 儲存圖片／影片訊息 =====
-    if (
-      session.step === 'image' &&
-      (event.message.type === 'image' || event.message.type === 'video')
-    ) {
+    // ====== 多媒體收集（支援多圖多影片）======
+    if (session.step === 'media' && (event.message.type === 'image' || event.message.type === 'video')) {
+      // 收集 buffer 與類型
       const messageId = event.message.id
       const buffer = await client.getMessageContent(messageId)
       const chunks = []
       for await (let chunk of buffer) { chunks.push(chunk) }
-      session.mediaBuffer = Buffer.concat(chunks)
-      session.mediaType = event.message.type // 'image' 或 'video'
-      session.step = 'text'
+      session.mediaList = session.mediaList || []
+      session.mediaList.push({
+        type: event.message.type,
+        buffer: Buffer.concat(chunks)
+      })
       sessionStore.set(userId, session)
-      return client.replyMessage(replyToken, { type: 'text', text: `✅ ${session.mediaType === 'image' ? '圖片' : '影片'}已上傳，請輸入文字內容` })
+      return client.replyMessage(replyToken, {
+        type: 'text',
+        text: `✅ 已收到${event.message.type === 'image' ? '圖片' : '影片'}，可繼續上傳（最多4則），完成請輸入「完成」`
+      })
     }
 
     if (event.message.type !== 'text') return
     const userMessage = event.message.text.trim()
 
-    // ===== 只接受「排程推播」「刪除推播」 =====
+    // 僅接受「排程推播」「刪除推播」開頭指令
     if (!session.step && !userMessage.startsWith('排程推播') && !userMessage.startsWith('刪除推播')) return
 
-    // ===== 刪除推播 =====
+    // 刪除推播
     if (userMessage.startsWith('刪除推播')) {
       const code = userMessage.split(' ')[1]
       const success = scheduleManager.deleteTask(code)
@@ -97,7 +102,7 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
       return client.replyMessage(replyToken, { type: 'text', text: msg })
     }
 
-    // ===== 排程推播流程 =====
+    // ====== 建立排程：step by step ======
     if (userMessage === '排程推播' && !session.step) {
       session.step = 'group'
       sessionStore.set(userId, session)
@@ -129,37 +134,60 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
         return client.replyMessage(replyToken, { type: 'text', text: '⚠️ 時間格式錯誤，請參考格式：10:00' })
       }
       session.time = userMessage
-      session.step = 'image'
+      session.step = 'media'
+      session.mediaList = []
       sessionStore.set(userId, session)
-      return client.replyMessage(replyToken, { type: 'text', text: '🖼️ 請直接上傳一張圖片、或一段影片（或輸入「無」）' })
+      return client.replyMessage(replyToken, {
+        type: 'text',
+        text: '🖼️ 請連續上傳圖片/影片（最多4則），完成請輸入「完成」，不需要請輸入「無」'
+      })
     }
-    if (session.step === 'image') {
-      if (userMessage === '無') {
-        session.mediaBuffer = null
-        session.mediaType = null
+    // 多媒體結束判斷
+    if (session.step === 'media') {
+      if (userMessage === '完成') {
         session.step = 'text'
         sessionStore.set(userId, session)
-        return client.replyMessage(replyToken, { type: 'text', text: '💬 請輸入文字內容' })
+        return client.replyMessage(replyToken, { type: 'text', text: '💬 請輸入推播文字內容' })
       }
-      return client.replyMessage(replyToken, { type: 'text', text: '⚠️ 請直接上傳圖片或影片檔案，或輸入「無」' })
+      if (userMessage === '無') {
+        session.mediaList = []
+        session.step = 'text'
+        sessionStore.set(userId, session)
+        return client.replyMessage(replyToken, { type: 'text', text: '💬 請輸入推播文字內容' })
+      }
+      return client.replyMessage(replyToken, { type: 'text', text: '請繼續上傳圖片/影片，完成請輸入「完成」或「無」略過' })
     }
+
+    // ===== 完成推播設定，組合媒體訊息並新增排程 =====
     if (session.step === 'text') {
       session.text = userMessage
-      let mediaUrl = null, mediaType = session.mediaType
-      if (session.mediaBuffer) {
-        try {
-          mediaUrl = await uploadMediaBuffer(session.mediaBuffer)
-        } catch (err) {
-          return client.replyMessage(replyToken, { type: 'text', text: '❌ 檔案上傳失敗，請重新嘗試，或輸入「無」略過' })
+      let mediaMessages = []
+      if (session.mediaList && session.mediaList.length) {
+        // 最多4則，支援圖片/影片
+        for (const item of session.mediaList.slice(0, 4)) {
+          let url = null
+          try {
+            url = await uploadMediaBuffer(item.buffer, item.type) // cloudinaryUploader 須支援 type
+          } catch (e) {
+            continue
+          }
+          if (url) {
+            if (item.type === 'image') {
+              mediaMessages.push({ type: 'image', originalContentUrl: url, previewImageUrl: url })
+            } else if (item.type === 'video') {
+              mediaMessages.push({ type: 'video', originalContentUrl: url, previewImageUrl: url })
+            }
+          }
         }
       }
+      // 加入文字訊息
+      mediaMessages.push({ type: 'text', text: session.text })
       const taskCode = scheduleManager.addTask({
-        groupId: session.groupId,  
+        groupId: session.groupId,
         groupName: session.groupName,
         date: session.date,
         time: session.time,
-        mediaUrl,
-        mediaType,
+        mediaMessages,
         text: session.text,
         client,
         adminUserIds: ADMIN_USER_IDS
