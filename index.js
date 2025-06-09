@@ -19,6 +19,20 @@ const client = new line.Client(config)
 // ⬇️ 多管理員支援：以 , 分割
 const ADMIN_USER_IDS = (process.env.ADMIN_USER_ID || '').split(',').map(x => x.trim()).filter(Boolean)
 
+const SESSION_TIMEOUT = 30 * 60 * 1000 // 30分鐘
+
+// ⬇️ session 取值&過期自動清空
+function safeGetSession(userId) {
+  const session = sessionStore.get(userId)
+  if (session.lastActive && Date.now() - session.lastActive > SESSION_TIMEOUT) {
+    sessionStore.clear(userId)
+    return {}
+  }
+  session.lastActive = Date.now()
+  sessionStore.set(userId, session)
+  return session
+}
+
 app.use('/webhook', line.middleware(config), async (req, res) => {
   const events = req.body.events
   await Promise.all(events.map(async (event) => {
@@ -30,7 +44,8 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
     // ⬇️ 僅限管理員可操作
     if (!ADMIN_USER_IDS.includes(userId)) return
 
-    const session = sessionStore.get(userId)
+    // 使用 safeGetSession
+    const session = safeGetSession(userId)
 
     // ===== 📋 查詢所有排程 =====
     if (event.message.type === 'text' && event.message.text.trim() === '查詢推播') {
@@ -48,6 +63,12 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
         await client.replyMessage(replyToken, { type: 'text', text: msgs.join('\n\n') })
       }
       return
+    }
+
+    // ===== ⏹️ 任何步驟都可中止 =====
+    if (event.message.type === 'text' && event.message.text.trim() === '取消') {
+      sessionStore.clear(userId)
+      return client.replyMessage(replyToken, { type: 'text', text: '流程已取消，歡迎隨時重新開始。' })
     }
 
     // ===== 儲存圖片 =====
@@ -132,7 +153,7 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
         }
       }
       const taskCode = scheduleManager.addTask({
-        groupId: session.groupId,
+        groupId: session.groupId,  
         groupName: session.groupName,
         date: session.date,
         time: session.time,
