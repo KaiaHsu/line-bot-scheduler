@@ -144,7 +144,7 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
           sessionStore.set(userId, session)
           
           if (savedGroups.length > 0) {
-              const list = savedGroups.map((g, idx) => `#${idx + 1} ${g.groupName}（${g.groupId}）`).join('\n')
+              const list = savedGroups.map((g, idx) => `#${idx + 1} ${g.groupName}\n （${g.groupId}）`).join('\n')
               return client.replyMessage(replyToken, {
                 type: 'text',
                 text: `\ud83d\udd14 請輸入：\n群組編號 或群組 ID\n\n已儲存群組：\n${list}`
@@ -168,7 +168,7 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
               sessionStore.set(userId, session)
               return client.replyMessage(replyToken, {
                 type: 'text',
-                text: `選擇群組：${group.groupName}，推播日期（YYYY-MM-DD）`
+                text: `選擇群組：${group.groupName}\n推播日期（YYYY-MM-DD）`
               })
             }
 
