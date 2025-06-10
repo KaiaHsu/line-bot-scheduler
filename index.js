@@ -1,4 +1,5 @@
-// index.js
+// 📁 index.js
+
 const express = require('express')
 const line = require('@line/bot-sdk')
 const dotenv = require('dotenv')
@@ -25,7 +26,7 @@ scheduleManager.restoreTasks(client, ADMIN_USER_IDS)
 setInterval(() => {
   sessionStore.cleanupExpiredSessions()
   console.log('🧹 已清理過期 Session')
-}, 30 * 60 * 1000)
+}, SESSION_TIMEOUT)
 
 function safeGetSession(userId) {
   const session = sessionStore.get(userId)
@@ -50,20 +51,24 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
       const userId = event.source.userId
       const replyToken = event.replyToken
 
-      // 非管理員不回應任何訊息
-      if (!ADMIN_USER_IDS.includes(userId)) return
+      // 非管理員一律不回應
+      if (!ADMIN_USER_IDS.includes(userId)) {
+        return
+      }
 
-      // 貼圖訊息直接忽略
-      if (event.message.type === 'sticker') return
+      // 貼圖一律忽略不回應
+      if (event.message.type === 'sticker') {
+        return
+      }
 
       const session = safeGetSession(userId)
 
-      // 快捷指令 - 嗨小編
+      // 文字快速指令 - 嗨小編
       if (event.message.type === 'text' && event.message.text.trim() === '嗨小編') {
         return client.replyMessage(replyToken, { type: 'text', text: '小編已抵達目的地！' })
       }
 
-      // 快捷指令 - 查詢推播
+      // 文字快速指令 - 查詢推播
       if (event.message.type === 'text' && event.message.text.trim() === '查詢推播') {
         const list = scheduleManager.listTasks()
         if (!list.length) {
@@ -110,8 +115,10 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
         })
       }
 
-      // 非文字訊息直接忽略，不回應任何訊息
-      if (event.message.type !== 'text') return
+      // 非文字訊息直接忽略不回應
+      if (event.message.type !== 'text') {
+        return
+      }
 
       const userMessage = event.message.text.trim()
 
