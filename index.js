@@ -230,19 +230,18 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
         let mediaMessages = []
         if (session.mediaList && session.mediaList.length) {
           for (const item of session.mediaList.slice(0, 4)) {
-            let url = null
+            let uploadResult = null
             try {
-              url = await uploadMediaBuffer(item.buffer, item.type)
+              uploadResult = await uploadMediaBuffer(item.buffer, item.type)
             } catch (e) {
               continue
             }
-            if (url) {
+            if (uploadResult && typeof uploadResult.url === 'string') {
               if (item.type === 'image') {
-                mediaMessages.push({ type: 'image', originalContentUrl: url, previewImageUrl: url })
+                mediaMessages.push({ type: 'image', originalContentUrl: uploadResult.url, previewImageUrl: uploadResult.url })
               } else if (item.type === 'video') {
-                // 影片預覽縮圖使用 Cloudinary API 自動生成影片截圖
-                const previewUrl = `${url.replace(/\.(mp4|mov|avi|wmv)$/i, '')}.jpg`
-                mediaMessages.push({ type: 'video', originalContentUrl: url, previewImageUrl: previewUrl })
+                // 影片的 previewImageUrl 用 cloudinary 影片縮圖網址（previewUrl）
+                mediaMessages.push({ type: 'video', originalContentUrl: uploadResult.url, previewImageUrl: uploadResult.previewUrl || uploadResult.url })
               }
             }
           }
