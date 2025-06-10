@@ -51,12 +51,9 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
       const userId = event.source.userId
       const replyToken = event.replyToken
 
-      // 管理員權限判斷
+      // 非管理員不回應任何訊息（直接忽略）
       if (!ADMIN_USER_IDS.includes(userId)) {
-        return client.replyMessage(replyToken, {
-          type: 'text',
-          text: '❌ 您無權操作此機器人'
-        })
+      return
       }
 
       const session = safeGetSession(userId)
