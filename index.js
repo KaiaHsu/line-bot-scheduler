@@ -34,8 +34,10 @@ function safeGetSession(userId) {
 app.use('/webhook', line.middleware(config), async (req, res) => {
   const events = req.body.events
   await Promise.all(events.map(async (event) => {
-    if (event.type !== 'message') return
 
+    console.log('📨 收到事件：', event)
+    if (event.type !== 'message') return
+    
     const userId = event.source.userId
     const replyToken = event.replyToken
 
