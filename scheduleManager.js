@@ -2,7 +2,7 @@
 const nodeSchedule = require('node-schedule')
 const fs = require('fs-extra')
 const path = require('path')
-const zonedTimeToUtc = require('date-fns-tz').zonedTimeToUtc// 引入時區轉換函式
+const { zonedTimeToUtc } = require('date-fns-tz')// 引入時區轉換函式
 const { v4: uuidv4 } = require('uuid')
 
 const TASK_FILE = path.resolve(__dirname, 'tasks.json')
@@ -48,6 +48,7 @@ function addTask({ groupId, groupName, date, time, mediaMessages = [], text, cli
 
   // 使用台灣時區轉換成 UTC 時間
   const jobDate = parseDateTimeToUtc(date, time)
+  console.log('📅 Job UTC 時間：', jobDate.toISOString(), '| 現在時間：', new Date().toISOString())
 
   // 防止設定過去時間的任務
   if (jobDate <= new Date()) {
@@ -58,7 +59,7 @@ function addTask({ groupId, groupName, date, time, mediaMessages = [], text, cli
   const meta = { groupId, groupName, date, time, mediaMessages, text }
 
   const job = nodeSchedule.scheduleJob(jobDate, async function () {
-    console.log(`📤 [推播觸發] ${groupName}（${groupId}） at ${date} ${time}`)
+    console.log(`📤 [推播觸發] ${groupName}（${groupId}） at ${date} ${time} | UTC: ${jobDate}`)
 
     let messages = Array.isArray(mediaMessages) ? [...mediaMessages] : []
 
@@ -94,7 +95,7 @@ function addTask({ groupId, groupName, date, time, mediaMessages = [], text, cli
         })
       }
     } catch (err) {
-      console.error('❌ 推播發送失敗', err)
+      console.error('❌ 推播發送失敗', JSON.stringify(err, null, 2))
       for (const adminId of adminUserIds) {
         await client.pushMessage(adminId, {
           type: 'text',
@@ -130,6 +131,7 @@ function deleteTask(code) {
  * 查詢所有尚未執行的推播任務
  */
 function listTasks() {
+  console.log('📋 當前任務清單代碼：', Object.keys(tasks))
   return Object.entries(tasks).map(([code, job]) => {
     const meta = job.meta || {}
     return {
