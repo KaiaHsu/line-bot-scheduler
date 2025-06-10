@@ -137,55 +137,64 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
           return client.replyMessage(replyToken, { type: 'text', text: msg })
         }
 
-        // --- 【群組選擇優化：可選數字，也可手動輸入 groupId】 ---
+        // 新增排程起始
         if (userMessage === '排程推播' && !session.step) {
-          // 取得已儲存群組，若有則列出選單
+          session.step = 'group'
+          sessionStore.set(userId, session)
+
           const groups = groupStore.getAllGroups()
           if (groups.length) {
-            const groupListMsg = groups.map((g, idx) =>
-              `#${idx + 1} ${g.groupName}（${g.groupId}）`
-            ).join('\n')
-            session.step = 'group'
-            sessionStore.set(userId, session)
+            const msg = groups.map((g, i) => `#${i + 1} ${g.groupName}（${g.groupId}）`).join('\n')
             return client.replyMessage(replyToken, {
               type: 'text',
-              text: `請選擇群組（輸入編號或直接輸入群組 ID）：\n${groupListMsg}\n\n首次使用請手動輸入群組 ID`
+              text: `🔔 要推播的群組請輸入：\n群組編號 或群組 ID\n\n已儲存群組：\n${msg}`
             })
           } else {
-            session.step = 'group'
-            sessionStore.set(userId, session)
             return client.replyMessage(replyToken, { type: 'text', text: '🔔 要推播的群組 ID' })
           }
         }
+
+        // 處理群組選擇（輸入數字或 ID）
         if (session.step === 'group') {
-          // 若直接輸入數字，則自動帶入已儲存群組
           if (/^\d+$/.test(userMessage)) {
-            const group = groupStore.getGroupByIndex(Number(userMessage))
+            const group = groupStore.getGroupByIndex(Number(userMessage.trim()))
             if (group) {
               session.groupId = group.groupId
               session.groupName = group.groupName
               session.step = 'date'
               sessionStore.set(userId, session)
-              return client.replyMessage(replyToken, { type: 'text', text: `選擇群組：${group.groupName}，請輸入推播日期（YYYY-MM-DD）` })
+              return client.replyMessage(replyToken, {
+                type: 'text',
+                text: `選擇群組：${group.groupName}，請輸入推播日期（YYYY-MM-DD）`
+              })
             }
-            // 編號錯誤
-            return client.replyMessage(replyToken, { type: 'text', text: '⚠️ 群組編號無效，請重新輸入。' })
+
+            const groups = groupStore.getAllGroups()
+            if (groups.length) {
+              const groupListMsg = groups.map((g, idx) => `#${idx + 1} ${g.groupName}（${g.groupId}）`).join('\n')
+              return client.replyMessage(replyToken, {
+                type: 'text',
+                text: `⚠️ 群組編號無效，請重新輸入\n\n目前可用群組：\n${groupListMsg}`
+              })
+            } else {
+              return client.replyMessage(replyToken, { type: 'text', text: '⚠️ 群組編號無效，尚未有任何已儲存群組。' })
+            }
           } else {
-            // 輸入群組 ID，進入群組名稱
             session.groupId = userMessage
             session.step = 'groupName'
             sessionStore.set(userId, session)
             return client.replyMessage(replyToken, { type: 'text', text: '🏷️ 請輸入此群組名稱（自訂顯示用）' })
           }
         }
+
         if (session.step === 'groupName') {
           session.groupName = userMessage
-          // 新增/更新群組儲存
-          groupStore.addGroup(session.groupId, session.groupName)
+          groupStore.addGroup({ groupId: session.groupId, groupName: session.groupName })
           session.step = 'date'
           sessionStore.set(userId, session)
-          return client.replyMessage(replyToken, { type: 'text', text: '📅 推播日期（YYYY-MM-DD）' })
+          return client.replyMessage(replyToken, { type: 'text', text: '📅 請輸入推播日期（YYYY-MM-DD）' })
         }
+        
         if (session.step === 'date') {
           if (!/^\d{4}-\d{2}-\d{2}$/.test(userMessage)) {
             return client.replyMessage(replyToken, { type: 'text', text: '⚠️ 日期格式錯誤，請輸入格式：YYYY-MM-DD' })
