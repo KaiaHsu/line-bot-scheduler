@@ -1,5 +1,3 @@
-// 📁 index.js
-
 const express = require('express')
 const line = require('@line/bot-sdk')
 const dotenv = require('dotenv')
@@ -20,13 +18,14 @@ const ADMIN_USER_IDS = (process.env.ADMIN_USER_ID || '').split(',').map(x => x.t
 const SESSION_TIMEOUT = 30 * 60 * 1000 // 30分鐘
 
 // 啟動時還原排程任務
+console.log('🚀 正在還原排程任務...')
 scheduleManager.restoreTasks(client, ADMIN_USER_IDS)
 
 // 定期清理過期 session
 setInterval(() => {
   sessionStore.cleanupExpiredSessions()
   console.log('🧹 已清理過期 Session')
-}, 30 * 60 * 1000)
+}, SESSION_TIMEOUT)
 
 function safeGetSession(userId) {
   const session = sessionStore.get(userId)
@@ -51,24 +50,26 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
       const userId = event.source.userId
       const replyToken = event.replyToken
 
-      // 非管理員不回應任何訊息（直接忽略）
+      // 非管理員忽略，不回應
       if (!ADMIN_USER_IDS.includes(userId)) {
+        console.log(`⚠️ 非管理員 ${userId} 訊息忽略`)
         return
       }
 
-      // 貼圖訊息一律忽略
+      // 貼圖訊息忽略，不回應
       if (event.message.type === 'sticker') {
+        console.log(`⚠️ 管理員 ${userId} 傳貼圖訊息，忽略`)
         return
       }
 
       const session = safeGetSession(userId)
 
-      // 文字訊息快速指令 - 嗨小編
+      // 文字指令 - 嗨小編
       if (event.message.type === 'text' && event.message.text.trim() === '嗨小編') {
         return client.replyMessage(replyToken, { type: 'text', text: '小編已抵達目的地！' })
       }
 
-      // 文字訊息快速指令 - 查詢推播
+      // 文字指令 - 查詢推播
       if (event.message.type === 'text' && event.message.text.trim() === '查詢推播') {
         const list = scheduleManager.listTasks()
         if (!list.length) {
@@ -76,7 +77,7 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
         }
         const chunk = (arr, size) => arr.length ? [arr.slice(0, size), ...chunk(arr.slice(size), size)] : []
         const msgLines = list.map((task, i) =>
-          `#${i+1}\n群組：${task.groupName}（${task.groupId}）\n時間：${task.date} ${task.time}\n內容：「${task.text}」\n代碼：${task.code}`
+          `#${i + 1}\n群組：${task.groupName}（${task.groupId}）\n時間：${task.date} ${task.time}\n內容：「${task.text}」\n代碼：${task.code}`
         )
         const msgChunks = chunk(msgLines, 4)
         for (const msgs of msgChunks) {
@@ -115,8 +116,9 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
         })
       }
 
-      // 非文字訊息直接忽略，不回應任何訊息
+      // 非文字訊息忽略
       if (event.message.type !== 'text') {
+        console.log(`⚠️ 管理員 ${userId} 傳非文字非多媒體訊息，忽略`)
         return
       }
 
@@ -205,6 +207,7 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
             try {
               url = await uploadMediaBuffer(item.buffer, item.type)
             } catch (e) {
+              console.error('❌ 上傳媒體失敗', e)
               continue
             }
             if (url) {
