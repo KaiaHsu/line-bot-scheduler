@@ -27,4 +27,17 @@ function getGroupByIndex(index) {
   return groups[index - 1]
 }
 
-module.exports = { getAllGroups, addGroup, getGroupByIndex }
+function deleteGroupByIndex(index) {
+  const groups = getAllGroups()
+  if (index < 1 || index > groups.length) return false
+  groups.splice(index - 1, 1)
+  fs.writeJsonSync(GROUP_FILE, groups, { spaces: 2 })
+  return true
+}
+
+module.exports = {
+  getAllGroups,
+  addGroup,
+  getGroupByIndex,
+  deleteGroupByIndex
+}
