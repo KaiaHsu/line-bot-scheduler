@@ -1,4 +1,3 @@
-// 📁 index.js
 const express = require('express')
 const line = require('@line/bot-sdk')
 const dotenv = require('dotenv')
@@ -11,7 +10,7 @@ const uploadMediaBuffer = require('./cloudinaryUploader')
 
 const config = {
   channelAccessToken: process.env.CHANNEL_ACCESS_TOKEN,
-  channelSecret: process.env.CHANNEL_SECRET,
+  channelSecret: process.env.CHANNEL_SECRET
 }
 
 const client = new line.Client(config)
@@ -27,17 +26,14 @@ setInterval(() => {
   console.log('🧹 已清理過期 Session')
 }, SESSION_TIMEOUT)
 
-// 確保 session 有 lastActive，並更新時間
 function safeGetSession(userId) {
-  let session = sessionStore.get(userId)
-  if (!session.lastActive || Date.now() - session.lastActive > SESSION_TIMEOUT) {
+  const session = sessionStore.get(userId)
+  if (session.lastActive && Date.now() - session.lastActive > SESSION_TIMEOUT) {
     sessionStore.clear(userId)
-    session = { lastActive: Date.now() }
-    sessionStore.set(userId, session)
-  } else {
-    session.lastActive = Date.now()
-    sessionStore.set(userId, session)
+    return {}
   }
+  session.lastActive = Date.now()
+  sessionStore.set(userId, session)
   return session
 }
 
@@ -78,7 +74,7 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
         }
         const chunk = (arr, size) => arr.length ? [arr.slice(0, size), ...chunk(arr.slice(size), size)] : []
         const msgLines = list.map((task, i) =>
-          `#${i + 1}\n群組：${task.groupName}（${task.groupId}）\n時間：${task.date} ${task.time}\n內容：「${task.text}」\n代碼：${task.code}`
+          `#${i+1}\n群組：${task.groupName}（${task.groupId}）\n時間：${task.date} ${task.time}\n內容：「${task.text}」\n代碼：${task.code}`
         )
         const msgChunks = chunk(msgLines, 4)
         for (const msgs of msgChunks) {
@@ -144,8 +140,99 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
         return client.replyMessage(replyToken, { type: 'text', text: msg })
       }
 
-      // 其他排程推播流程保持原邏輯
-      // ...
+      // 排程推播流程
+      if (userMessage === '排程推播' && !session.step) {
+        session.step = 'group'
+        sessionStore.set(userId, session)
+        return client.replyMessage(replyToken, { type: 'text', text: '🔔 要推播的群組 ID' })
+      }
+      if (session.step === 'group') {
+        session.groupId = userMessage
+        session.step = 'groupName'
+        sessionStore.set(userId, session)
+        return client.replyMessage(replyToken, { type: 'text', text: '🏷️ 群組名稱（自訂顯示用）' })
+      }
+      if (session.step === 'groupName') {
+        session.groupName = userMessage
+        session.step = 'date'
+        sessionStore.set(userId, session)
+        return client.replyMessage(replyToken, { type: 'text', text: '📅 推播日期（YYYY-MM-DD）' })
+      }
+      if (session.step === 'date') {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(userMessage)) {
+          return client.replyMessage(replyToken, { type: 'text', text: '⚠️ 日期格式錯誤，請輸入格式：YYYY-MM-DD' })
+        }
+        session.date = userMessage
+        session.step = 'time'
+        sessionStore.set(userId, session)
+        return client.replyMessage(replyToken, { type: 'text', text: '⏰ 時間（格式：10:00）' })
+      }
+      if (session.step === 'time') {
+        if (!/^\d{2}:\d{2}$/.test(userMessage)) {
+          return client.replyMessage(replyToken, { type: 'text', text: '⚠️ 時間格式錯誤，請參考格式：10:00' })
+        }
+        session.time = userMessage
+        session.step = 'media'
+        session.mediaList = []
+        sessionStore.set(userId, session)
+        return client.replyMessage(replyToken, {
+          type: 'text',
+          text: '🖼️ 請連續上傳圖片/影片（最多4則），完成請輸入「完成」，不需要請輸入「無」'
+        })
+      }
+      if (session.step === 'media') {
+        if (userMessage === '完成') {
+          session.step = 'text'
+          sessionStore.set(userId, session)
+          return client.replyMessage(replyToken, { type: 'text', text: '💬 請輸入推播文字內容' })
+        }
+        if (userMessage === '無') {
+          session.mediaList = []
+          session.step = 'text'
+          sessionStore.set(userId, session)
+          return client.replyMessage(replyToken, { type: 'text', text: '💬 請輸入推播文字內容' })
+        }
+        return client.replyMessage(replyToken, { type: 'text', text: '請繼續上傳圖片/影片，完成請輸入「完成」或「無」略過' })
+      }
+      if (session.step === 'text') {
+        session.text = userMessage
+        let mediaMessages = []
+        if (session.mediaList && session.mediaList.length) {
+          for (const item of session.mediaList.slice(0, 4)) {
+            let url = null
+            try {
+              url = await uploadMediaBuffer(item.buffer, item.type)
+            } catch (e) {
+              continue
+            }
+            if (url) {
+              if (item.type === 'image') {
+                mediaMessages.push({ type: 'image', originalContentUrl: url, previewImageUrl: url })
+              } else if (item.type === 'video') {
+                // 影片預覽縮圖使用 Cloudinary API 自動生成影片截圖
+                const previewUrl = `${url.replace(/\.(mp4|mov|avi|wmv)$/i, '')}.jpg`
+                mediaMessages.push({ type: 'video', originalContentUrl: url, previewImageUrl: previewUrl })
+              }
+            }
+          }
+        }
+        mediaMessages.push({ type: 'text', text: session.text })
+        const taskCode = scheduleManager.addTask({
+          groupId: session.groupId,
+          groupName: session.groupName,
+          date: session.date,
+          time: session.time,
+          mediaMessages,
+          text: session.text,
+          client,
+          adminUserIds: ADMIN_USER_IDS
+        })
+        sessionStore.clear(userId)
+        return client.replyMessage(replyToken, {
+          type: 'text',
+          text: `✅ 推播已排程成功！代碼：${taskCode}\n🔕 若想刪除請輸入：刪除推播 ${taskCode}`
+        })
+      }
     } catch (err) {
       console.error('❌ 處理事件錯誤', err)
     }
