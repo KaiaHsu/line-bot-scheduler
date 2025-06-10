@@ -215,13 +215,13 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
         if (userMessage === '完成') {
           session.step = 'text'
           sessionStore.set(userId, session)
-          return client.replyMessage(replyToken, { type: 'text', text: '💬 請輸入推播文字內容' })
+          return client.replyMessage(replyToken, { type: 'text', text: '💬 推播文字內容' })
         }
         if (userMessage === '無') {
           session.mediaList = []
           session.step = 'text'
           sessionStore.set(userId, session)
-          return client.replyMessage(replyToken, { type: 'text', text: '💬 請輸入推播文字內容' })
+          return client.replyMessage(replyToken, { type: 'text', text: '💬 推播文字內容' })
         }
         return client.replyMessage(replyToken, { type: 'text', text: '請繼續上傳圖片/影片，完成請輸入「完成」或「無」略過' })
       }
