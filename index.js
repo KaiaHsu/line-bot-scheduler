@@ -132,11 +132,42 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
         return
       }
 
-      // 刪除推播指令
-      if (userMessage.startsWith('刪除推播')) {
-        const code = userMessage.split(' ')[1]
-        const success = scheduleManager.deleteTask(code)
-        const msg = success ? `✅ 已刪除排程 ${code}` : `⚠️ 無任何排程 ${code}`
+      // 刪除推播互動流程
+      if (userMessage === '刪除推播' && !session.step) {
+        const list = scheduleManager.listTasks()
+        if (!list.length) {
+          return client.replyMessage(replyToken, { type: 'text', text: '目前沒有任何推播可刪除。' })
+        }
+        session.step = 'deleteTask'
+        session.taskList = list
+        sessionStore.set(userId, session)
+
+        const msgLines = list.map((task, i) =>
+          `#${i + 1}\n群組：${task.groupName}（${task.groupId}）\n時間：${task.date} ${task.time}\n內容：「${task.text}」`
+        )
+        msgLines.push('\n請輸入數字 1~' + list.length + ' 以刪除對應排程，或輸入「取消」退出。')
+        return client.replyMessage(replyToken, { type: 'text', text: msgLines.join('\n\n') })
+      }
+
+      if (session.step === 'deleteTask') {
+        if (userMessage === '取消') {
+          sessionStore.clear(userId)
+          return client.replyMessage(replyToken, { type: 'text', text: '❎ 已取消刪除操作。' })
+        }
+
+        const choice = parseInt(userMessage, 10)
+        const taskList = session.taskList || []
+        if (!Number.isInteger(choice) || choice < 1 || choice > taskList.length) {
+          return client.replyMessage(replyToken, { type: 'text', text: '⚠️ 請輸入有效的數字編號，或輸入「取消」退出。' })
+        }
+
+        const task = taskList[choice - 1]
+        const success = scheduleManager.deleteTask(task.code)
+        sessionStore.clear(userId)
+
+        const msg = success
+          ? `✅ 已刪除排程：${task.groupName}（${task.groupId}）時間：${task.date} ${task.time}`
+          : `⚠️ 排程刪除失敗，請稍後再試。`
         return client.replyMessage(replyToken, { type: 'text', text: msg })
       }
 
