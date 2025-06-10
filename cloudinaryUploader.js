@@ -22,7 +22,7 @@ async function uploadMediaBuffer(buffer, type = 'image') {
       {
         resource_type,
         // 影片上傳時，同時生成縮圖（eager）
-        eager: resource_type === 'video' ? [{ width: 300, height: 200, crop: 'pad', format: 'jpg' }] : undefined,
+        eager: resource_type === 'video' ? [{ width: 1080, height: 1920, crop: 'pad', format: 'jpg' }] : undefined,
         eager_async: false,
       },
       (error, result) => {
