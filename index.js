@@ -53,7 +53,12 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
 
       // 非管理員不回應任何訊息（直接忽略）
       if (!ADMIN_USER_IDS.includes(userId)) {
-      return
+        return
+      }
+
+      // 貼圖訊息一律忽略
+      if (event.message.type === 'sticker') {
+        return
       }
 
       const session = safeGetSession(userId)
@@ -110,18 +115,22 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
         })
       }
 
-      // 非文字訊息忽略（提示）
+      // 非文字訊息直接忽略，不回應任何訊息
       if (event.message.type !== 'text') {
-        return client.replyMessage(replyToken, {
-          type: 'text',
-          text: '❗ 本機器人目前僅支援文字指令及多媒體上傳，請輸入有效指令或上傳圖片/影片。'
-        })
+        return
       }
 
       const userMessage = event.message.text.trim()
 
-      // 只接受指定指令開頭或流程中
-      if (!session.step && !userMessage.startsWith('排程推播') && !userMessage.startsWith('刪除推播')) {
+      // 只接受指定指令開頭或流程中，其他不回應
+      if (
+        !session.step &&
+        !userMessage.startsWith('排程推播') &&
+        !userMessage.startsWith('刪除推播') &&
+        userMessage !== '查詢推播' &&
+        userMessage !== '嗨小編' &&
+        userMessage !== '取消'
+      ) {
         return
       }
 
