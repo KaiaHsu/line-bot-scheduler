@@ -9,21 +9,21 @@ cloudinary.config({
 
 /**
  * 上傳圖片或影片 Buffer，並返回可公開存取的 URL
- * @param {Buffer} buffer 
- * @param {'image'|'video'} [type='image'] 
- * @returns {Promise<string>} URL
+ * @param {Buffer} buffer - 多媒體檔案的 Buffer
+ * @param {'image'|'video'} [type='image'] - 媒體類型，預設為圖片
+ * @returns {Promise<string>} - 成功返回雲端 URL
  */
 async function uploadMediaBuffer(buffer, type = 'image') {
   return new Promise((resolve, reject) => {
-    const resource_type = type === 'video' ? 'video' : 'image'
-    const uploadOptions = { resource_type }
-    // 如需指定資料夾，可新增:
-    // uploadOptions.folder = 'your-folder-name'
+    const resource_type = (type === 'video') ? 'video' : 'image'
 
     const upload_stream = cloudinary.uploader.upload_stream(
-      uploadOptions,
+      { resource_type },
       (error, result) => {
-        if (error) return reject(error)
+        if (error) {
+          console.error('Cloudinary Upload Error:', error)
+          return reject(error)
+        }
         resolve(result.secure_url)
       }
     )
