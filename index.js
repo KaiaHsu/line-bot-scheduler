@@ -140,7 +140,7 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
       if (userMessage.startsWith('刪除推播')) {
         const code = userMessage.split(' ')[1]
         const success = scheduleManager.deleteTask(code)
-        const msg = success ? `✅ 已刪除排程 ${code}` : `⚠️ 找不到代碼 ${code}`
+        const msg = success ? `✅ 已刪除排程 ${code}` : `⚠️ 無任何排程 ${code}`
         return client.replyMessage(replyToken, { type: 'text', text: msg })
       }
 
