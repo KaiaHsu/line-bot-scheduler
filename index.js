@@ -137,6 +137,50 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
           return client.replyMessage(replyToken, { type: 'text', text: msg })
         }
 
+        // 刪除群組互動起始
+        if (userMessage === '刪除群組' && !session.step) {
+          const groups = groupStore.getAllGroups()
+          if (!groups.length) {
+            return client.replyMessage(replyToken, { type: 'text', text: '⚠️ 目前沒有任何已儲存群組可刪除。' })
+          }
+          const list = groups.map((g, i) => `#${i + 1} ${g.groupName}（${g.groupId}）`).join('\n')
+          session.step = 'deleteGroup'
+          session.groupList = groups
+          sessionStore.set(userId, session)
+          return client.replyMessage(replyToken, {
+            type: 'text',
+            text: `📛 以下是已儲存的群組：\n${list}\n\n請輸入數字 1～${groups.length} 以刪除對應群組，或輸入「取消」退出。`
+          })
+        }
+
+        // 刪除群組執行階段
+        if (session.step === 'deleteGroup') {
+          if (userMessage === '取消') {
+            sessionStore.clear(userId)
+            return client.replyMessage(replyToken, { type: 'text', text: '❎ 已取消刪除群組操作。' })
+          }
+
+          const index = parseInt(userMessage, 10)
+          const groups = session.groupList || []
+          if (!Number.isInteger(index) || index < 1 || index > groups.length) {
+            return client.replyMessage(replyToken, {
+              type: 'text',
+              text: `⚠️ 請輸入有效的群組編號（1～${groups.length}），或輸入「取消」退出。`
+            })
+          }
+
+          const group = groups[index - 1]
+          const success = groupStore.deleteGroupByIndex(index)
+          sessionStore.clear(userId)
+
+          return client.replyMessage(replyToken, {
+            type: 'text',
+            text: success
+              ? `✅ 已刪除群組：${group.groupName}\n（${group.groupId}）`
+              : '⚠️ 群組刪除失敗，請稍後再試。'
+          })
+        }
+
         // 新增排程起始
         if (userMessage === '排程推播' && !session.step) {
           const savedGroups = groupStore.getAllGroups()
