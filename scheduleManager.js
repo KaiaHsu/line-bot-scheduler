@@ -1,9 +1,12 @@
+// 📁 scheduleManager.js
 const nodeSchedule = require('node-schedule')
 const fs = require('fs-extra')
 const path = require('path')
+const { zonedTimeToUtc } = require('date-fns-tz') // 引入時區轉換函式
 const { v4: uuidv4 } = require('uuid')
 
 const TASK_FILE = path.resolve(__dirname, 'tasks.json')
+const TIMEZONE = 'Asia/Taipei' // 台灣時區
 const tasks = {}
 
 function persistTasks() {
@@ -20,35 +23,32 @@ function restoreTasks(client, adminUserIds = []) {
   const taskList = fs.readJsonSync(TASK_FILE)
   for (const task of taskList) {
     const { code, groupId, groupName, date, time, mediaMessages, text } = task
-    const jobDate = new Date(`${date}T${time}:00`)
-    if (jobDate <= new Date()) {
-      console.log(`跳過過期任務：${groupName} ${date} ${time}`)
-      continue
-    }
     addTask({ groupId, groupName, date, time, mediaMessages, text, client, adminUserIds, restore: true }, code)
   }
+
   console.log(`🌀 已還原 ${taskList.length} 筆排程任務`)
 }
 
-async function tryPushMessage(client, groupId, messages, retries = 3) {
-  for (let i = 0; i < retries; i++) {
-    try {
-      await client.pushMessage(groupId, messages)
-      return true
-    } catch (e) {
-      console.error(`推播失敗，第${i + 1}次重試：`, e)
-      if (i === retries - 1) throw e
-      await new Promise(res => setTimeout(res, 1000))
-    }
-  }
+/**
+ * 解析日期與時間（台灣時間）成 UTC Date 物件給 node-schedule 使用
+ */
+function parseDateTimeToUtc(dateStr, timeStr) {
+  const dateTimeStr = `${dateStr}T${timeStr}:00`
+  return zonedTimeToUtc(dateTimeStr, TIMEZONE)
 }
 
+/**
+ * 新增推播排程
+ * @param {Object} param0 - 推播參數
+ * @param {string} [manualCode] - 復原時使用既有 code
+ */
 function addTask({ groupId, groupName, date, time, mediaMessages = [], text, client, adminUserIds = [], restore = false }, manualCode) {
   const code = manualCode || uuidv4()
-  const [hour, minute] = time.split(':')
-  const [year, month, day] = date.split('-')
-  const jobDate = new Date(year, month - 1, day, hour, minute)
 
+  // 使用台灣時區轉換成 UTC 時間
+  const jobDate = parseDateTimeToUtc(date, time)
+
+  // 防止設定過去時間的任務
   if (jobDate <= new Date()) {
     console.warn(`⚠️ 無法新增過去時間的排程：${groupName} ${date} ${time}`)
     return null
@@ -72,7 +72,7 @@ function addTask({ groupId, groupName, date, time, mediaMessages = [], text, cli
     }
 
     try {
-      if (messages.length) await tryPushMessage(client, groupId, messages)
+      if (messages.length) await client.pushMessage(groupId, messages)
       for (const adminId of adminUserIds) {
         await client.pushMessage(adminId, {
           type: 'text',
@@ -108,6 +108,9 @@ function addTask({ groupId, groupName, date, time, mediaMessages = [], text, cli
   return code
 }
 
+/**
+ * 刪除指定排程
+ */
 function deleteTask(code) {
   if (tasks[code]) {
     tasks[code].cancel()
@@ -118,6 +121,9 @@ function deleteTask(code) {
   return false
 }
 
+/**
+ * 查詢所有尚未執行的推播任務
+ */
 function listTasks() {
   return Object.entries(tasks).map(([code, job]) => {
     const meta = job.meta || {}
@@ -133,19 +139,4 @@ function listTasks() {
   })
 }
 
-function cleanupExpiredTasks() {
-  const now = new Date()
-  Object.entries(tasks).forEach(([code, job]) => {
-    if (job.nextInvocation() === null) {
-      job.cancel()
-      delete tasks[code]
-      console.log(`🗑️ 清理過期任務：${code}`)
-    }
-  })
-  persistTasks()
-}
-
-// 每小時自動清理過期任務
-setInterval(cleanupExpiredTasks, 60 * 60 * 1000)
-
-module.exports = { addTask, deleteTask, listTasks, restoreTasks, cleanupExpiredTasks }
+module.exports = { addTask, deleteTask, listTasks, restoreTasks }
