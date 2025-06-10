@@ -1,4 +1,3 @@
-// 📁 cloudinaryUploader.js
 const cloudinary = require('cloudinary').v2
 const streamifier = require('streamifier')
 
@@ -9,7 +8,7 @@ cloudinary.config({
 })
 
 /**
- * 上傳圖片或影片 Buffer，並返回可公開存取的 URL 和影片預覽圖 URL
+ * 上傳圖片或影片 Buffer，返回 { url, previewUrl? }
  * @param {Buffer} buffer 
  * @param {'image'|'video'} [type='image'] 
  * @returns {Promise<{url: string, previewUrl?: string}>}
@@ -22,9 +21,8 @@ async function uploadMediaBuffer(buffer, type = 'image') {
       { resource_type },
       (error, result) => {
         if (error) return reject(error)
-        // 影片預覽圖處理
         if (resource_type === 'video') {
-          // 影片縮圖網址
+          // Cloudinary 標準影片縮圖網址
           const previewUrl = cloudinary.url(result.public_id + '.jpg', { resource_type: 'video' })
           resolve({ url: result.secure_url, previewUrl })
         } else {
