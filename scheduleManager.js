@@ -2,7 +2,7 @@
 const nodeSchedule = require('node-schedule')
 const fs = require('fs-extra')
 const path = require('path')
-const { zonedTimeToUtc } = require('date-fns-tz') // 引入時區轉換函式
+const zonedTimeToUtc = require('date-fns-tz').zonedTimeToUtc// 引入時區轉換函式
 const { v4: uuidv4 } = require('uuid')
 
 const TASK_FILE = path.resolve(__dirname, 'tasks.json')
