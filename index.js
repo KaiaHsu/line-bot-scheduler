@@ -147,12 +147,12 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
               const list = savedGroups.map((g, idx) => `#${idx + 1} ${g.groupName}（${g.groupId}）`).join('\n')
               return client.replyMessage(replyToken, {
                 type: 'text',
-                text: `\ud83d\udd14 要推播的群組請輸入：\n群組編號 或群組 ID\n\n已儲存群組：\n${list}`
+                text: `\ud83d\udd14 請輸入：\n群組編號 或群組 ID\n\n已儲存群組：\n${list}`
               })
             } else {
               return client.replyMessage(replyToken, {
                 type: 'text',
-                text: '\ud83d\udd14 要推播的群組請輸入群組 ID：'
+                text: '\ud83d\udd14 要推播的群組 ID：'
               })
             }
           }
@@ -168,7 +168,7 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
               sessionStore.set(userId, session)
               return client.replyMessage(replyToken, {
                 type: 'text',
-                text: `選擇群組：${group.groupName}，請輸入推播日期（YYYY-MM-DD）`
+                text: `選擇群組：${group.groupName}，推播日期（YYYY-MM-DD）`
               })
             }
 
@@ -186,7 +186,7 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
             session.groupId = userMessage
             session.step = 'groupName'
             sessionStore.set(userId, session)
-            return client.replyMessage(replyToken, { type: 'text', text: '🏷️ 請輸入此群組名稱（自訂顯示用）' })
+            return client.replyMessage(replyToken, { type: 'text', text: '🏷️ 群組名稱（自訂顯示用）' })
           }
         }
 
@@ -196,7 +196,7 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
           groupStore.addGroup(session.groupId, session.groupName)
           session.step = 'date'
           sessionStore.set(userId, session)
-          return client.replyMessage(replyToken, { type: 'text', text: '📅 請輸入推播日期（YYYY-MM-DD）' })
+          return client.replyMessage(replyToken, { type: 'text', text: '📅 推播日期（YYYY-MM-DD）' })
         }
 
         if (session.step === 'date') {
