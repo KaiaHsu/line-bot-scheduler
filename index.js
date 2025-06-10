@@ -139,20 +139,24 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
 
         // 新增排程起始
         if (userMessage === '排程推播' && !session.step) {
+          const groups = groupStore.getAllGroups()
+          
           session.step = 'group'
           sessionStore.set(userId, session)
-
-          const groups = groupStore.getAllGroups()
-          if (groups.length) {
-            const msg = groups.map((g, i) => `#${i + 1} ${g.groupName}（${g.groupId}）`).join('\n')
-            return client.replyMessage(replyToken, {
-              type: 'text',
-              text: `🔔 要推播的群組請輸入：\n群組編號 或群組 ID\n\n已儲存群組：\n${msg}`
-            })
-          } else {
-            return client.replyMessage(replyToken, { type: 'text', text: '🔔 要推播的群組 ID' })
+          
+          if (savedGroups.length > 0) {
+              const list = savedGroups.map((g, idx) => `#${idx + 1} ${g.groupName}（${g.groupId}）`).join('\n')
+              return client.replyMessage(replyToken, {
+                type: 'text',
+                text: `🔔 要推播的群組請輸入：\n群組編號 或群組 ID\n\n已儲存群組：\n${list}`
+              })
+            } else {
+              return client.replyMessage(replyToken, {
+                type: 'text',
+                text: '🔔 要推播的群組請輸入群組 ID：'
+              })
+            }
           }
-        }
 
         // 處理群組選擇（輸入數字或 ID）
         if (session.step === 'group') {
@@ -189,12 +193,13 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
 
         if (session.step === 'groupName') {
           session.groupName = userMessage
-          groupStore.addGroup({ groupId: session.groupId, groupName: session.groupName })
+          // ✅ 儲存群組資訊
+          groupStore.addGroup(session.groupId, session.groupName)
           session.step = 'date'
           sessionStore.set(userId, session)
           return client.replyMessage(replyToken, { type: 'text', text: '📅 請輸入推播日期（YYYY-MM-DD）' })
         }
-        
+
         if (session.step === 'date') {
           if (!/^\d{4}-\d{2}-\d{2}$/.test(userMessage)) {
             return client.replyMessage(replyToken, { type: 'text', text: '⚠️ 日期格式錯誤，請輸入格式：YYYY-MM-DD' })
