@@ -139,8 +139,7 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
 
         // 新增排程起始
         if (userMessage === '排程推播' && !session.step) {
-          const groups = groupStore.getAllGroups()
-          
+          const savedGroups = groupStore.getAllGroups()
           session.step = 'group'
           sessionStore.set(userId, session)
           
@@ -148,12 +147,12 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
               const list = savedGroups.map((g, idx) => `#${idx + 1} ${g.groupName}（${g.groupId}）`).join('\n')
               return client.replyMessage(replyToken, {
                 type: 'text',
-                text: `🔔 要推播的群組請輸入：\n群組編號 或群組 ID\n\n已儲存群組：\n${list}`
+                text: `\ud83d\udd14 要推播的群組請輸入：\n群組編號 或群組 ID\n\n已儲存群組：\n${list}`
               })
             } else {
               return client.replyMessage(replyToken, {
                 type: 'text',
-                text: '🔔 要推播的群組請輸入群組 ID：'
+                text: '\ud83d\udd14 要推播的群組請輸入群組 ID：'
               })
             }
           }
