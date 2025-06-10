@@ -9,35 +9,30 @@ cloudinary.config({
 })
 
 /**
- * 上傳圖片或影片 Buffer，並返回可公開存取的 URL
+ * 上傳圖片或影片 Buffer，並返回可公開存取的 URL 和影片預覽圖 URL
  * @param {Buffer} buffer 
  * @param {'image'|'video'} [type='image'] 
- * @returns {Promise<Object>} { url, previewUrl } 或 { videoUrl, previewUrl }
+ * @returns {Promise<{url: string, previewUrl?: string}>}
  */
 async function uploadMediaBuffer(buffer, type = 'image') {
   return new Promise((resolve, reject) => {
-    let resource_type = type === 'video' ? 'video' : 'image'
+    const resource_type = type === 'video' ? 'video' : 'image'
 
     const upload_stream = cloudinary.uploader.upload_stream(
-      {
-        resource_type,
-        // 影片上傳時，同時生成縮圖（eager）
-        eager: resource_type === 'video' ? [{ width: 1080, height: 1920, crop: 'pad', format: 'jpg' }] : undefined,
-        eager_async: false,
-      },
+      { resource_type },
       (error, result) => {
         if (error) return reject(error)
+        // 影片預覽圖處理
         if (resource_type === 'video') {
-          // 影片：返回影片 URL 和縮圖 URL
-          const videoUrl = result.secure_url
-          const previewUrl = result.eager && result.eager[0] ? result.eager[0].secure_url : null
-          resolve({ videoUrl, previewUrl })
+          // 影片縮圖網址
+          const previewUrl = cloudinary.url(result.public_id + '.jpg', { resource_type: 'video' })
+          resolve({ url: result.secure_url, previewUrl })
         } else {
-          // 圖片：返回圖片 URL (previewUrl 同 url)
-          resolve({ url: result.secure_url, previewUrl: result.secure_url })
+          resolve({ url: result.secure_url })
         }
       }
     )
+
     streamifier.createReadStream(buffer).pipe(upload_stream)
   })
 }
