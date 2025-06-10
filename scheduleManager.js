@@ -2,11 +2,11 @@
 const nodeSchedule = require('node-schedule')
 const fs = require('fs-extra')
 const path = require('path')
-const { zonedTimeToUtc } = require('date-fns-tz')
 const { v4: uuidv4 } = require('uuid')
 
 const TASK_FILE = path.resolve(__dirname, 'tasks.json')
-const TIMEZONE = 'Asia/Taipei'
+const TIMEZONE_OFFSET = 8 // 台灣時區 +8
+
 const tasks = {}
 
 function persistTasks() {
@@ -27,9 +27,14 @@ function restoreTasks(client, adminUserIds = []) {
   console.log(`🌀 已還原 ${taskList.length} 筆排程任務`)
 }
 
+// 100%不會報 function not found！台灣時區時間→UTC
 function parseDateTimeToUtc(dateStr, timeStr) {
-  const dateTimeStr = `${dateStr}T${timeStr}:00`
-  return zonedTimeToUtc(dateTimeStr, TIMEZONE)
+  // dateStr: '2024-06-12', timeStr: '10:30'
+  const [year, month, day] = dateStr.split('-').map(Number)
+  const [hour, minute] = timeStr.split(':').map(Number)
+  // 建立 UTC 時間 = 台灣本地時間 - 8小時
+  const utcDate = new Date(Date.UTC(year, month - 1, day, hour - TIMEZONE_OFFSET, minute))
+  return utcDate
 }
 
 function addTask({ groupId, groupName, date, time, mediaMessages = [], text, client, adminUserIds = [], restore = false }, manualCode) {
