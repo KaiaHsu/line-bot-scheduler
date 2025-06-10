@@ -43,6 +43,14 @@ const port = process.env.PORT || 3000
 app.use('/webhook', line.middleware(config), async (req, res) => {
   const events = req.body.events
   await Promise.all(events.map(async (event) => {
+
+    // 機器人被加入群組時，僅記錄群組 ID 到後台 log
+    if (event.type === 'join' && event.source.type === 'group') {
+      const groupId = event.source.groupId
+      console.log(`📥 Bot 被加入群組，Group ID：${groupId}`)
+      return
+    }
+    
     try {
       if (event.type !== 'message') return
 
