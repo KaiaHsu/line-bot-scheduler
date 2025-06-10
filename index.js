@@ -313,7 +313,7 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
           sessionStore.clear(userId)
           return client.replyMessage(replyToken, {
             type: 'text',
-            text: `✅ 推播已排程成功！代碼：${taskCode}\n🔕 若想刪除請輸入：刪除推播 ${taskCode}`
+            text: `✅ 推播已排程成功！\n代碼：${taskCode}\n\n🔕 若想直接刪除請輸入：\n刪除推播 ${taskCode}`
           })
         }
       } // end text
