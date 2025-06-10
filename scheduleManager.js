@@ -2,15 +2,13 @@
 const nodeSchedule = require('node-schedule')
 const fs = require('fs-extra')
 const path = require('path')
+const zonedTimeToUtc = require('date-fns-tz').zonedTimeToUtc// 引入時區轉換函式
 const { v4: uuidv4 } = require('uuid')
 
 const TASK_FILE = path.resolve(__dirname, 'tasks.json')
-const TIMEZONE = 'Asia/Taipei' // 台灣時區（註記用）
+const TIMEZONE = 'Asia/Taipei' // 台灣時區
 const tasks = {}
 
-/**
- * 將現有任務寫入本地檔案
- */
 function persistTasks() {
   const persistData = Object.entries(tasks).map(([code, job]) => {
     const meta = job.meta
@@ -19,9 +17,6 @@ function persistTasks() {
   fs.writeJsonSync(TASK_FILE, persistData, { spaces: 2 })
 }
 
-/**
- * 啟動時從檔案讀取任務並重建排程
- */
 function restoreTasks(client, adminUserIds = []) {
   if (!fs.existsSync(TASK_FILE)) return
 
@@ -35,26 +30,23 @@ function restoreTasks(client, adminUserIds = []) {
 }
 
 /**
- * 解析日期與時間（台灣時區）成 Date 物件給 node-schedule 使用
- * @param {string} dateStr - 格式 YYYY-MM-DD
- * @param {string} timeStr - 格式 HH:mm
- * @returns {Date}
+ * 解析日期與時間（台灣時間）成 UTC Date 物件給 node-schedule 使用
  */
 function parseDateTimeToUtc(dateStr, timeStr) {
-  // 手動拼接台灣時區 +08:00
-  const dateTimeStr = `${dateStr}T${timeStr}:00+08:00`
-  return new Date(dateTimeStr)
+  const dateTimeStr = `${dateStr}T${timeStr}:00`
+  return zonedTimeToUtc(dateTimeStr, TIMEZONE)
 }
 
 /**
  * 新增推播排程
  * @param {Object} param0 - 推播參數
+ * @param {Array} param0.mediaMessages - [{ type: 'image'|'video'|'text', originalContentUrl, previewImageUrl, text }]
  * @param {string} [manualCode] - 復原時使用既有 code
  */
 function addTask({ groupId, groupName, date, time, mediaMessages = [], text, client, adminUserIds = [], restore = false }, manualCode) {
   const code = manualCode || uuidv4()
 
-  // 解析成 UTC Date
+  // 使用台灣時區轉換成 UTC 時間
   const jobDate = parseDateTimeToUtc(date, time)
 
   // 防止設定過去時間的任務
@@ -93,10 +85,10 @@ function addTask({ groupId, groupName, date, time, mediaMessages = [], text, cli
             `✅ 推播已完成\n群組：${groupName}（${groupId}）\n日期：${date} ${time}\n` +
             messages
               .map((m, i) => {
-                if (m.type === 'text') return `(${i + 1}) 文字：「${m.text}」`
-                if (m.type === 'image') return `(${i + 1}) 圖片`
-                if (m.type === 'video') return `(${i + 1}) 影片`
-                return `(${i + 1}) 其他`
+                if (m.type === 'text') return `${i + 1} | 文字：「${m.text}」`
+                if (m.type === 'image') return `${i + 1} | 圖片`
+                if (m.type === 'video') return `${i + 1}) | 影片`
+                return `${i + 1} | 其他`
               })
               .join('\n')
         })
