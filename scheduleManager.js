@@ -1,116 +1,135 @@
-// scheduleManager.js（Supabase 版，圖片訊息正確，推播正確，欄位正確）
-const supabase = require('./supabase')
+// scheduleManager.js
 const { v4: uuidv4 } = require('uuid')
+const supabase = require('./supabase')
+const dayjs = require('dayjs')
 
-const TABLE = 'tasks'
-let scheduledJobs = {} // 代碼: timeout物件
+const taskStore = new Map()
 
-// --- 還原所有任務 ---
-async function restoreTasks(client, adminUserIds) {
-  const { data, error } = await supabase
-    .from(TABLE)
-    .select('*')
-    .gte('date', new Date().toISOString().slice(0, 10)) // 只還原今天以後
-    .order('date', { ascending: true })
-
-  if (error) {
-    console.error('❌ 還原推播任務失敗', error)
+function scheduleTaskExecution(task) {
+  const dateTimeStr = `${task.date} ${task.time}`
+  const delay = dayjs(dateTimeStr).diff(dayjs())
+  if (delay <= 0) {
+    console.log(`⚠️ 排程時間已過：${dateTimeStr}`)
     return
   }
-  for (const task of data || []) {
-    scheduleJob(task, client)
-  }
-}
 
-// --- 排程單一任務 ---
-function scheduleJob(task, client) {
-  // 刪除原有
-  if (scheduledJobs[task.id]) {
-    clearTimeout(scheduledJobs[task.id])
-  }
-  // 計算 UTC 排程時間
-  const dateTime = new Date(`${task.date}T${task.time}:00+08:00`)
-  const now = new Date()
-  const delay = dateTime - now
-  if (delay <= 0) return
-
-  scheduledJobs[task.id] = setTimeout(async () => {
+  const timer = setTimeout(async () => {
     try {
-      // 解析 media_json，回推
-      let messages = []
-      if (Array.isArray(task.media_json) && task.media_json.length > 0) {
-        messages = task.media_json
+      console.log(`📤 開始推播任務 ${task.code} 至群組 ${task.groupName}`)
+      for (const msg of task.mediaMessages) {
+        await task.client.pushMessage(task.groupId, msg)
       }
-      messages.push({ type: 'text', text: task.text })
-      await client.pushMessage(task.group_id, messages)
-      await supabase.from(TABLE).delete().eq('id', task.id)
-      delete scheduledJobs[task.id]
-    } catch (e) {
-      console.error('❌ 定時推播發送失敗', e)
+      console.log(`✅ 已完成推播任務 ${task.code}`)
+    } catch (err) {
+      console.error(`❌ 推播任務 ${task.code} 發生錯誤：`, err)
     }
+    taskStore.delete(task.code)
   }, delay)
+
+  taskStore.set(task.code, { ...task, timer })
 }
 
-// --- 新增推播任務 ---
-async function addTask({ groupId, groupName, date, time, mediaMessages, text, client }) {
-  const taskId = uuidv4()
-  const { data, error } = await supabase
-    .from(TABLE)
-    .insert([{
-      id: taskId,
+async function addTask({
+  groupId,
+  groupName,
+  date,
+  time,
+  mediaMessages,
+  text,
+  client,
+}) {
+  const code = uuidv4()
+
+  try {
+    const { error } = await supabase.from('tasks').insert({
+      id: code,
       group_id: groupId,
       group_name: groupName,
       date,
       time,
       text,
-      media_json: mediaMessages
-    }])
-    .select()
-    .maybeSingle()
-  if (error) {
-    console.error('❌ 新增推播失敗', error)
-    return null
+      media_json: mediaMessages,
+    })
+    if (error) {
+      console.error('❌ 儲存排程至 Supabase 失敗：', error)
+    } else {
+      console.log('✅ 任務儲存至 Supabase 成功')
+    }
+  } catch (err) {
+    console.error('❌ 插入 Supabase 時出錯：', err)
   }
-  scheduleJob({ ...data }, client)
-  return taskId
+
+  const task = {
+    code,
+    groupId,
+    groupName,
+    date,
+    time,
+    mediaMessages,
+    text,
+    client,
+  }
+
+  scheduleTaskExecution(task)
+  return code
 }
 
-// --- 刪除推播任務 ---
-async function deleteTask(taskCode) {
-  // 查詢是否有該任務
-  const { data, error } = await supabase.from(TABLE).select('*').eq('id', taskCode).maybeSingle()
-  if (error || !data) return false
-  if (scheduledJobs[taskCode]) clearTimeout(scheduledJobs[taskCode])
-  await supabase.from(TABLE).delete().eq('id', taskCode)
-  return true
+function listTasks() {
+  return Array.from(taskStore.values())
 }
 
-// --- 列出所有推播任務 ---
-async function listTasks() {
+async function deleteTask(code) {
+  const task = taskStore.get(code)
+  if (task) {
+    clearTimeout(task.timer)
+    taskStore.delete(code)
+  }
+
+  const { error } = await supabase
+    .from('tasks')
+    .delete()
+    .eq('id', code)
+
+  if (error) {
+    console.error('❌ 刪除任務時發生錯誤：', error)
+  } else {
+    console.log(`🗑️ 已刪除任務 ${code} from Supabase`)
+  }
+}
+
+async function restoreTasks(client) {
+  const now = dayjs().format('YYYY-MM-DD HH:mm')
+
   const { data, error } = await supabase
-    .from(TABLE)
-    .select('id, group_id, group_name, date, time, text, media_json')
-    .order('date', { ascending: true })
-    .order('time', { ascending: true })
+    .from('tasks')
+    .select('*')
+    .gte('date', dayjs().format('YYYY-MM-DD'))
+
   if (error) {
-    console.error('❌ 查詢推播任務失敗', error)
-    return []
+    console.error('❌ 讀取任務錯誤：', error)
+    return
   }
-  // 回傳 taskList: 要用 id 作為 code
-  return (data || []).map(t => ({
-    code: t.id,
-    groupId: t.group_id,
-    groupName: t.group_name,
-    date: t.date,
-    time: t.time,
-    text: t.text,
-    media_json: t.media_json
-  }))
+
+  for (const task of data) {
+    const fullTask = {
+      code: task.id,
+      groupId: task.group_id,
+      groupName: task.group_name,
+      date: task.date,
+      time: task.time,
+      mediaMessages: task.media_json || [],
+      text: task.text,
+      client,
+    }
+    scheduleTaskExecution(fullTask)
+  }
+
+  console.log(`🔁 已還原 ${data.length} 筆任務`)
 }
 
 module.exports = {
-  restoreTasks,
   addTask,
-  deleteTask,
   listTasks,
+  deleteTask,
+  restoreTasks,
 }
