@@ -232,17 +232,19 @@ app.use('/webhook', line.middleware(config), async (req, res) => {
         if (session.step === 'group') {
           if (/^\d+$/.test(msg)) {
             const grp = await groupStore.getGroupByIndex(Number(msg))
-            if (!grp)
+            if (!grp) {
               return client.replyMessage(replyToken, {
                 type: 'text',
                 text: '編號錯誤，請重試。',
               })
-            session.groupId = grp.group_id
-            session.groupName = grp.group_name
+            }
+            session.groupId = grp.groupId
+            session.groupName = grp.groupName
           } else {
             session.groupId = msg
             session.groupName = null
           }
+
           session.step = 'groupName'
           sessionStore.set(userId, session)
           return client.replyMessage(replyToken, {
