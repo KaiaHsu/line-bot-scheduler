@@ -20,6 +20,14 @@ const ADMIN_USER_IDS = (process.env.ADMIN_USER_ID || '').split(',').map(x => x.t
 const SESSION_TIMEOUT = 30 * 60 * 1000 // 30分鐘
 
 scheduleManager.restoreTasks(client, ADMIN_USER_IDS)
+if (ADMIN_USER_IDS.length) {
+  client.pushMessage(ADMIN_USER_IDS[0], {
+    type: 'text',
+    text: '🚀 LINE Bot 已重新啟動，排程任務已還原完成！'
+  }).catch(err => {
+    console.error('⚠️ 無法發送開機通知訊息', err.message)
+  })
+}
 
 setInterval(() => {
   sessionStore.cleanupExpiredSessions()
