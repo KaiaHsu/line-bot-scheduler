@@ -1,6 +1,9 @@
+// index.js
 const express = require('express')
 const line = require('@line/bot-sdk')
 const dotenv = require('dotenv')
+const dayjs = require('dayjs')
+
 dotenv.config()
 
 const scheduleManager = require('./scheduleManager')
@@ -14,26 +17,15 @@ const config = {
 }
 
 const client = new line.Client(config)
-const ADMIN_USER_IDS = (process.env.ADMIN_USER_ID || '').split(',').map(x => x.trim()).filter(Boolean)
-const SESSION_TIMEOUT = 30 * 60 * 1000
+const ADMIN_USER_IDS = (process.env.ADMIN_USER_ID || '')
+  .split(',')
+  .map(x => x.trim())
+  .filter(Boolean)
+const SESSION_TIMEOUT = 30 * 60 * 1000 // 30 分鐘
 
-scheduleManager.restoreTasks(client, ADMIN_USER_IDS)
-if (ADMIN_USER_IDS.length) {
-  client.pushMessage(ADMIN_USER_IDS[0], {
-    type: 'text',
-    text: '🚀 LINE Bot 已重新啟動，排程任務已還原完成！'
-  }).catch(err => {
-    console.error('⚠️ 無法發送開機通知訊息', err.message)
-  })
-}
-
-setInterval(() => {
-  sessionStore.cleanupExpiredSessions()
-  console.log('🧹 已清理過期 Session')
-}, SESSION_TIMEOUT)
-
-async function safeGetSession(userId) {
+function safeGetSession(userId) {
   let session = sessionStore.get(userId)
+  if (!session) session = {}
   if (session.lastActive && Date.now() - session.lastActive > SESSION_TIMEOUT) {
     sessionStore.clear(userId)
     session = {}
@@ -43,315 +35,341 @@ async function safeGetSession(userId) {
   return session
 }
 
+scheduleManager.restoreTasks(client, ADMIN_USER_IDS)
+  .then(() => {
+    if (ADMIN_USER_IDS.length) {
+      client.pushMessage(ADMIN_USER_IDS[0], {
+        type: 'text',
+        text: '🚀 LINE Bot 已重新啟動，排程任務已還原完成！'
+      }).catch(err => {
+        console.error('⚠️ 無法發送開機通知訊息', err.message)
+      })
+    }
+  })
+  .catch(err => console.error('❌ 還原任務失敗', err.message))
+
 const app = express()
 const port = process.env.PORT || 3000
 
-app.use(express.json())
-
-app.post('/webhook', line.middleware(config), async (req, res) => {
+app.use('/webhook', line.middleware(config), async (req, res) => {
   const events = req.body.events || []
 
-  await Promise.all(events.map(async (event) => {
-    try {
-      // 機器人被加入群組時僅 log
-      if (event.type === 'join' && event.source.type === 'group') {
-        console.log('📥 Bot 被加入群組，Group ID：', event.source.groupId)
-        return
-      }
+  await Promise.all(
+    events.map(async (event) => {
+      try {
+        // 你的事件處理邏輯寫在這裡
+        if (event.type === 'join' && event.source.type === 'group') {
+          console.log('📥 Bot 被加入群組，Group ID：', event.source.groupId)
+          return
+        }
 
-      if (event.type !== 'message') return
-      const userId = event.source.userId
-      const replyToken = event.replyToken
+        if (event.type !== 'message') return
+        if (!event.source.userId || !event.replyToken) return
+        if (!ADMIN_USER_IDS.includes(event.source.userId)) return
 
-      // 僅限管理員操作
+        const session = await safeGetSession(event.source.userId)
+        const replyToken = event.replyToken
+
       if (!ADMIN_USER_IDS.includes(userId)) return
+      if (event.message.type === 'sticker') return
 
-      const session = await safeGetSession(userId)
+      const userMessage = event.message.text?.trim()
 
-      if (event.message.type === 'text') {
-        const msg = event.message.text.trim()
-
-        // === 快速指令 ===
-        if (msg === '嗨小編') {
-          return client.replyMessage(replyToken, { type: 'text', text: '小編已抵達目的地！' })
+      if (event.message.type === 'text' && userMessage) {
+        if (userMessage === '嗨小編') {
+          return client.replyMessage(replyToken, {
+            type: 'text',
+            text: '小編已抵達目的地！'
+          })
         }
 
-        if (msg === '取消') {
+        if (userMessage === '取消') {
           sessionStore.clear(userId)
-          return client.replyMessage(replyToken, { type: 'text', text: '流程已取消。' })
+          return client.replyMessage(replyToken, {
+            type: 'text',
+            text: '❎ 已取消當前操作'
+          })
         }
 
-        // === 查詢推播任務 ===
-        if (msg === '查詢推播') {
+        if (userMessage === '查詢推播') {
           const list = scheduleManager.listTasks()
           if (!list.length) {
-            return client.replyMessage(replyToken, { type: 'text', text: '目前沒有任何推播排程。' })
+            return client.replyMessage(replyToken, {
+              type: 'text',
+              text: '目前沒有任何推播排程。'
+            })
           }
-
-          const lines = list.map((t, i) => `#${i + 1}\n群組：${t.groupName}（${t.groupId}）\n時間：${t.date} ${t.time}\n內容：「${t.text}」\n代碼：${t.code}`)
-          const chunk = (arr, n) => arr.length ? [arr.slice(0, n), ...chunk(arr.slice(n), n)] : []
-          for (const part of chunk(lines, 4)) {
-            await client.replyMessage(replyToken, { type: 'text', text: part.join('\n\n') })
+          const chunk = (arr, size) =>
+            arr.length ? [arr.slice(0, size), ...chunk(arr.slice(size), size)] : []
+          const msgLines = list.map((task, i) =>
+            `#${i + 1}\n群組：${task.groupName}（${task.groupId}）\n時間：${task.date} ${task.time}\n內容：「${task.text}」\n代碼：${task.code}`
+          )
+          const msgChunks = chunk(msgLines, 4)
+          for (const msgs of msgChunks) {
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: msgs.join('\n\n')
+            })
           }
           return
         }
 
-        // 以下為流程啟動與執行...
-        // === 刪除推播流程 ===
-        if (msg === '刪除推播' && !session.step) {
+        if (userMessage === '刪除推播' && !session.step) {
           const list = scheduleManager.listTasks()
           if (!list.length) {
-            return client.replyMessage(replyToken, { type: 'text', text: '目前沒有任何推播可刪除。' })
+            return client.replyMessage(replyToken, {
+              type: 'text',
+              text: '目前沒有任何推播可刪除。'
+            })
           }
           session.step = 'deleteTask'
           session.taskList = list
           sessionStore.set(userId, session)
 
-          const lines = list.map((t, i) =>
-            `#${i + 1}\n群組：${t.groupName}（${t.groupId}）\n時間：${t.date} ${t.time}\n內容：「${t.text}」`)
-          lines.push(`\n請輸入數字 1～${list.length} 以刪除對應排程，或輸入「取消」退出。`)
-
-          return client.replyMessage(replyToken, { type: 'text', text: lines.join('\n\n') })
+          const msgLines = list.map((task, i) =>
+            `#${i + 1}\n群組：${task.groupName}（${task.groupId}）\n時間：${task.date} ${task.time}\n內容：「${task.text}」`
+          )
+          msgLines.push('\n請輸入數字 1～' + list.length + ' 以刪除對應排程，或輸入「取消」退出。')
+          return client.replyMessage(replyToken, {
+            type: 'text',
+            text: msgLines.join('\n\n')
+          })
         }
 
         if (session.step === 'deleteTask') {
-          const idx = parseInt(msg, 10)
-          const list = session.taskList || []
-          if (isNaN(idx) || idx < 1 || idx > list.length) {
+          if (userMessage === '取消') {
+            sessionStore.clear(userId)
             return client.replyMessage(replyToken, {
               type: 'text',
-              text: '輸入錯誤，請重試。或輸入「取消」退出。'
+              text: '❎ 已取消刪除操作。'
             })
           }
-          const task = list[idx - 1]
-          await scheduleManager.deleteTask(task.code)
+          const choice = parseInt(userMessage, 10)
+          const taskList = session.taskList || []
+          if (!Number.isInteger(choice) || choice < 1 || choice > taskList.length) {
+            return client.replyMessage(replyToken, {
+              type: 'text',
+              text: '⚠️ 請輸入有效的數字編號，或輸入「取消」退出。'
+            })
+          }
+          const task = taskList[choice - 1]
+          const success = await scheduleManager.deleteTask(task.code)
           sessionStore.clear(userId)
+          const msg = success
+            ? `✅ 已刪除排程：${task.groupName}（${task.groupId}）\n時間：${task.date} ${task.time}`
+            : `⚠️ 排程刪除失敗，請稍後再試。`
           return client.replyMessage(replyToken, {
             type: 'text',
-            text: `✅ 已刪除排程：${task.groupName}（${task.groupId}） ${task.date} ${task.time}`
+            text: msg
           })
         }
 
-        // === 刪除群組流程 ===
-        if (msg === '刪除群組' && !session.step) {
-          const groups = await groupStore.getAllGroups()
-          if (!groups.length) {
-            return client.replyMessage(replyToken, { type: 'text', text: '目前沒有群組可刪除。' })
-          }
-          session.step = 'deleteGroup'
-          session.groupList = groups
-          sessionStore.set(userId, session)
-
-          const list = groups.map((g, i) => `#${i + 1} ${g.groupName}（${g.groupId}）`).join('\n')
-          return client.replyMessage(replyToken, {
-            type: 'text',
-            text: `📛 請輸入編號以刪除群組：\n${list}\n\n或輸入「取消」退出。`
-          })
-        }
-
-        if (session.step === 'deleteGroup') {
-          const idx = parseInt(msg, 10)
-          const arr = session.groupList || []
-          if (isNaN(idx) || idx < 1 || idx > arr.length) {
+        if (userMessage === '查詢推播') {
+          const list = scheduleManager.listTasks()
+          if (!list.length) {
             return client.replyMessage(replyToken, {
               type: 'text',
-              text: `輸入錯誤，請重新輸入(1～${arr.length})或「取消」。`,
+              text: '目前沒有任何推播排程。'
             })
           }
-          const grp = arr[idx - 1]
-          await groupStore.deleteGroupByIndex(idx)
+          const chunk = (arr, size) =>
+            arr.length ? [arr.slice(0, size), ...chunk(arr.slice(size), size)] : []
+          const msgLines = list.map((task, i) =>
+            `#${i + 1}\n群組：${task.groupName}（${task.groupId}）\n時間：${task.date} ${task.time}\n內容：「${task.text}」\n代碼：${task.code}`
+          )
+          const msgChunks = chunk(msgLines, 4)
+          for (const msgs of msgChunks) {
+            await client.replyMessage(replyToken, {
+              type: 'text',
+              text: msgs.join('\n\n')
+            })
+          }
+          return
+        }
+
+        if (userMessage === '刪除推播' && !session.step) {
+          const list = scheduleManager.listTasks()
+          if (!list.length) {
+            return client.replyMessage(replyToken, {
+              type: 'text',
+              text: '目前沒有任何推播可刪除。'
+            })
+          }
+          session.step = 'deleteTask'
+          session.taskList = list
+          sessionStore.set(userId, session)
+
+          const msgLines = list.map((task, i) =>
+            `#${i + 1}\n群組：${task.groupName}（${task.groupId}）\n時間：${task.date} ${task.time}\n內容：「${task.text}」`
+          )
+          msgLines.push('\n請輸入數字 1～' + list.length + ' 以刪除對應排程，或輸入「取消」退出。')
+          return client.replyMessage(replyToken, {
+            type: 'text',
+            text: msgLines.join('\n\n')
+          })
+        }
+
+        if (session.step === 'deleteTask') {
+          if (userMessage === '取消') {
+            sessionStore.clear(userId)
+            return client.replyMessage(replyToken, {
+              type: 'text',
+              text: '❎ 已取消刪除操作。'
+            })
+          }
+          const choice = parseInt(userMessage, 10)
+          const taskList = session.taskList || []
+          if (!Number.isInteger(choice) || choice < 1 || choice > taskList.length) {
+            return client.replyMessage(replyToken, {
+              type: 'text',
+              text: '⚠️ 請輸入有效的數字編號，或輸入「取消」退出。'
+            })
+          }
+          const task = taskList[choice - 1]
+          const success = await scheduleManager.deleteTask(task.code)
           sessionStore.clear(userId)
+          const msg = success
+            ? `✅ 已刪除排程：${task.groupName}（${task.groupId}）\n時間：${task.date} ${task.time}`
+            : `⚠️ 排程刪除失敗，請稍後再試。`
           return client.replyMessage(replyToken, {
             type: 'text',
-            text: `✅ 已刪除群組：${grp.groupName}（${grp.groupId}）`,
+            text: msg
           })
         }
 
-        // === 啟動排程推播流程 ===
-        if (msg === '排程推播' && !session.step) {
-          const saved = await groupStore.getAllGroups()
-          session.step = 'group'
-          sessionStore.set(userId, session)
-
-          if (saved.length) {
-            const list = saved
-              .map((g, i) => `#${i + 1} ${g.groupName}（${g.groupId}）`)
-              .join('\n')
-            return client.replyMessage(replyToken, {
-              type: 'text',
-              text: `🔔 請輸入群組編號或 ID：\n\n已儲存：\n${list}`,
-            })
-          }
-          return client.replyMessage(replyToken, {
-            type: 'text',
-            text: '🔔 請輸入要推播的群組 ID：',
-          })
-        }
-
-        // === 群組名稱輸入 ===
-        if (session.step === 'group') {
-          if (/^\d+$/.test(msg)) {
-            const grp = await groupStore.getGroupByIndex(Number(msg))
-            if (!grp) {
-              return client.replyMessage(replyToken, {
-                type: 'text',
-                text: '編號錯誤，請重試。',
-              })
-            }
-            session.groupId = grp.groupId
-            session.groupName = grp.groupName
-          } else {
-            session.groupId = msg
-            session.groupName = null
-          }
-          session.step = 'groupName'
-          sessionStore.set(userId, session)
-          return client.replyMessage(replyToken, {
-            type: 'text',
-            text: '🏷️ 請輸入群組自訂名稱：',
-          })
-        }
-
-        if (session.step === 'groupName') {
-          session.groupName = msg
-          await groupStore.addGroup(session.groupId, session.groupName)
-          session.step = 'date'
-          sessionStore.set(userId, session)
-          return client.replyMessage(replyToken, {
-            type: 'text',
-            text: '📅 請輸入推播日期（YYYY-MM-DD）：',
-          })
-        }
-
-        // === 日期 ===
         if (session.step === 'date') {
-          if (!/^\d{4}-\d{2}-\d{2}$/.test(msg)) {
+          const datePattern = /^\d{4}-\d{2}-\d{2}$/
+          if (!datePattern.test(userMessage)) {
             return client.replyMessage(replyToken, {
               type: 'text',
-              text: '⚠️ 請輸入 YYYY-MM-DD',
+              text: '⚠️ 日期格式錯誤，請輸入 YYYY-MM-DD，例如 2025-06-15'
             })
           }
-          session.date = msg
+          session.date = userMessage
           session.step = 'time'
           sessionStore.set(userId, session)
           return client.replyMessage(replyToken, {
             type: 'text',
-            text: '⏰ 請輸入時間（HH:mm）：',
+            text: '⏰ 請輸入推播時間（HH:mm），例如 10:00'
           })
         }
 
-        // === 時間 ===
         if (session.step === 'time') {
-          if (!/^\d{2}:\d{2}$/.test(msg)) {
+          const timePattern = /^\d{2}:\d{2}$/
+          if (!timePattern.test(userMessage)) {
             return client.replyMessage(replyToken, {
               type: 'text',
-              text: '⚠️ 請輸入 HH:mm',
+              text: '⚠️ 時間格式錯誤，請輸入 HH:mm，例如 14:30'
             })
           }
-          session.time = msg
+          session.time = userMessage
           session.step = 'media'
           session.mediaList = []
           sessionStore.set(userId, session)
           return client.replyMessage(replyToken, {
             type: 'text',
-            text: '🖼️ 請上傳圖片或影片（最多 4 則），完成請輸入「完成」，無請輸入「無」',
+            text: '📎 請上傳圖片或影片（最多 4 則），完成請輸入「完成」，若無請輸入「無」'
           })
         }
 
-        // === 上傳圖片 / 影片 ===
-        if (
-          session.step === 'media' &&
-          (event.message.type === 'image' || event.message.type === 'video')
-        ) {
-          const buf = await client.getMessageContent(event.message.id)
-          const arr = []
-          for await (const c of buf) arr.push(c)
+        // 收集多媒體訊息
+        if (session.step === 'media' && (event.message.type === 'image' || event.message.type === 'video')) {
+          const buffer = await client.getMessageContent(event.message.id)
+          const chunks = []
+          for await (const chunk of buffer) {
+            chunks.push(chunk)
+          }
+          const finalBuffer = Buffer.concat(chunks)
+
           session.mediaList.push({
             type: event.message.type,
-            buffer: Buffer.concat(arr),
+            buffer: finalBuffer
           })
-          sessionStore.set(userId, session)
 
+          sessionStore.set(userId, session)
           return client.replyMessage(replyToken, {
             type: 'text',
-            text: `✅ 已收到 ${
-              event.message.type === 'image' ? '圖片' : '影片'
-            }（第 ${session.mediaList.length} 則），完成請輸入「完成」`,
+            text: `✅ 已收到 ${event.message.type === 'image' ? '圖片' : '影片'}（共 ${session.mediaList.length} 則）`
           })
         }
 
-        if (session.step === 'media' && msg === '完成') {
+        if (session.step === 'media' && (userMessage === '完成' || userMessage === '無')) {
           session.step = 'text'
           sessionStore.set(userId, session)
           return client.replyMessage(replyToken, {
             type: 'text',
-            text: '💬 請輸入推播文字內容：',
+            text: '💬 請輸入推播的文字內容'
           })
         }
 
-        if (session.step === 'media' && msg === '無') {
-          session.step = 'text'
-          session.mediaList = []
-          sessionStore.set(userId, session)
-          return client.replyMessage(replyToken, {
-            type: 'text',
-            text: '💬 請輸入推播文字內容：',
-          })
-        }
-
-        // === 最後步驟：推播文字 + 上傳至 Cloudinary + 建立任務 ===
+        // 最後步驟：文字內容與建立排程
         if (session.step === 'text') {
-          session.text = msg
+          session.text = userMessage
           const mediaMessages = []
 
-          for (const item of session.mediaList) {
-            const result = await uploadMediaBuffer(item.buffer, item.type)
-            if (item.type === 'image') {
+          for (const media of session.mediaList || []) {
+            const result = await uploadMediaBuffer(media.buffer, media.type)
+            if (!result || !result.url) continue
+
+            if (media.type === 'image') {
               mediaMessages.push({
                 type: 'image',
                 originalContentUrl: result.url,
-                previewImageUrl: result.url,
+                previewImageUrl: result.url
               })
-            } else if (item.type === 'video') {
+            } else if (media.type === 'video') {
               mediaMessages.push({
                 type: 'video',
                 originalContentUrl: result.url,
-                previewImageUrl: result.previewUrl || result.url,
+                previewImageUrl: result.previewUrl || result.url
               })
             }
           }
 
           mediaMessages.push({ type: 'text', text: session.text })
 
-          const taskCode = await scheduleManager.addTask({
+          const code = await scheduleManager.addTask({
             groupId: session.groupId,
             groupName: session.groupName,
             date: session.date,
             time: session.time,
             mediaMessages,
             text: session.text,
+            client,
+            adminUserIds: ADMIN_USER_IDS
           })
 
           sessionStore.clear(userId)
 
           return client.replyMessage(replyToken, {
             type: 'text',
-            text: `✅ 推播已排程成功！代碼：${taskCode}`,
+            text: `✅ 已成功排程推播！任務代碼：${code}`
           })
         }
+
+        } // end if message.type === 'text'
+
+        } catch (err) {
+        console.error('❌ 單一事件處理錯誤：', err)
       }
-    } catch (e) {
-      console.error('❌ 處理事件錯誤', e)
-    }
-  }))
+    })
+  ).catch((err) => {
+    console.error('❌ webhook 主體處理錯誤：', err)
+  })
 
   res.status(200).end()
 })
 
-app.get('/', (req, res) => {
-  res.send('🤖 LINE Bot Scheduler is running')
+// 全域錯誤處理
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('💥 未捕捉的拒絕：', reason)
 })
 
+process.on('uncaughtException', (err) => {
+  console.error('💥 未捕捉的例外：', err)
+})
+
+// 啟動伺服器
 app.listen(port, () => {
-  console.log(`🚀 Server is running on port ${port}`)
+  console.log(`🚀 LINE Bot Scheduler 已啟動，運行於 http://localhost:${port}`)
 })
